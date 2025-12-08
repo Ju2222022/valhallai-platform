@@ -96,8 +96,11 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
     try:
         try: log_sheet = wb.worksheet("Logs")
         except: log_sheet = wb.add_worksheet(title="Logs", rows=1000, cols=6)
+        
+        # Vérification et réparation des en-têtes (évite le décalage colonne E)
         if not log_sheet.cell(1, 1).value:
             log_sheet.update("A1:F1", [["Date", "Time", "Report ID", "Type", "Details", "Metrics"]])
+            
         now = datetime.now()
         row = [now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), report_id, report_type, details, extra_metrics]
         log_sheet.append_row(row)
@@ -131,7 +134,7 @@ def update_market(idx, name):
         try: wb.sheet1.update_cell(idx + 1, 1, name); st.cache_data.clear()
         except: pass
 
-# --- DOMAINES (Watch_domains) ---
+# --- DOMAINES ---
 def get_domains():
     wb = get_gsheet_workbook()
     if wb:
@@ -180,7 +183,6 @@ def get_openai_client():
     return OpenAI(api_key=k) if k else None
 
 def run_deep_search(query, days=None):
-    """Recherche Tavily. Si days est fourni, filtre sur la période."""
     try:
         k = st.secrets.get("TAVILY_API_KEY")
         if not k: return None, "Key Missing"
@@ -243,29 +245,19 @@ def create_eva_prompt(ctx, doc):
     Structure: 1. Verdict, 2. Gap Table (Requirement|Status|Evidence|Missing), 3. Risks, 4. Recommendations."""
 
 def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
-    """Prompt pour MIA avec période dynamique."""
     return f"""
     ROLE: You are MIA (Market Intelligence Agent).
     CONTEXT: User monitoring: "{topic}" | Markets: {', '.join(markets)}
     SELECTED TIMEFRAME: {timeframe_label}
-    
-    RAW SEARCH DATA (From Web):
-    {raw_search_data}
-    
-    MISSION:
-    1. Filter the raw data. Keep only updates published within the "{timeframe_label}".
-    2. Analyze the impact of each item (High/Medium/Low).
-    3. Generate a structured JSON output.
-    
+    RAW SEARCH DATA: {raw_search_data}
+    MISSION: Filter and Analyze. Keep only updates relevant to the timeframe.
     OUTPUT FORMAT (Strict JSON):
     {{
-        "executive_summary": "Summary of the activity during {timeframe_label}...",
+        "executive_summary": "Summary...",
         "items": [
             {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["..."], "impact": "High/Medium/Low" }}
         ]
     }}
-    
-    IMPORTANT: Return ONLY the JSON. No markdown fencing.
     """
 
 def get_logo_svg():
@@ -290,7 +282,20 @@ def apply_theme():
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
     .stApp {{ background-color: {c['background']}; font-family: 'Inter', sans-serif; color: {c['text']}; }}
     h1, h2, h3 {{ font-family: 'Montserrat', sans-serif !important; color: {c['primary']} !important; }}
-    .info-card {{ background-color: {c['card']}; padding: 2rem; border-radius: 12px; border: 1px solid {c['border']}; }}
+    
+    /* MODIFICATION CSS POUR ALIGNEMENT PARFAIT DES CARTES */
+    .info-card {{ 
+        background-color: {c['card']}; 
+        padding: 2rem; 
+        border-radius: 12px; 
+        border: 1px solid {c['border']}; 
+        /* Hauteur fixe minimale pour garantir l'alignement */
+        min-height: 220px; 
+        display: flex;
+        flex-direction: column;
+        justify-content: flex-start;
+    }}
+    
     .logo-text {{ font-family: 'Montserrat', sans-serif; font-weight: 700; font-size: 1.4rem; color: {c['text']}; }}
     .logo-sub {{ font-size: 0.7rem; letter-spacing: 2px; text-transform: uppercase; color: {c['text_secondary']}; font-weight: 500; }}
     div.stButton > button:first-child {{ background-color: {c['primary']} !important; color: {c['button_text']} !important; border-radius: 8px; font-weight: 600; width: 100%;}}
@@ -312,7 +317,6 @@ def page_admin():
 
     tm, td = st.tabs(["🌍 Markets", "🕵️‍♂️ Sources (Deep Search)"])
     
-    # Markets
     with tm:
         mkts, _ = get_markets()
         with st.form("add_m"):
@@ -330,7 +334,6 @@ def page_admin():
                 if c2.button("💾", key=f"sm{i}"): update_market(i, nv); st.session_state["editing_market_index"]=None; st.rerun()
                 if c3.button("❌", key=f"cm{i}"): st.session_state["editing_market_index"]=None; st.rerun()
 
-    # Domains
     with td:
         doms, _ = get_domains()
         st.info("💡 Allowed domains for Deep Search & MIA Monitoring.")
@@ -356,46 +359,26 @@ def page_mia():
     st.markdown("---")
 
     markets, _ = get_markets()
-    col1, col2, col3 = st.columns([2, 1, 1]) 
-    
-    with col1: 
-        topic = st.text_input("🔎 Watch Topic / Product", placeholder="e.g. Cybersecurity for SaMD")
-    with col2: 
-        selected_markets = st.multiselect("🌍 Markets", markets, default=[markets[0]] if markets else None)
+    col1, col2, col3 = st.columns([2, 1, 1])
+    with col1: topic = st.text_input("🔎 Watch Topic / Product", placeholder="e.g. Cybersecurity for SaMD")
+    with col2: selected_markets = st.multiselect("🌍 Markets", markets, default=[markets[0]] if markets else None)
     with col3:
-        # SELECTEUR DE PÉRIODE
-        timeframe_map = {
-            "⚡ Last 30 Days": 30, 
-            "📅 Last 12 Months": 365, 
-            "🏛️ Last 3 Years": 1095
-        }
+        timeframe_map = {"⚡ Last 30 Days": 30, "📅 Last 12 Months": 365, "🏛️ Last 3 Years": 1095}
         selected_label = st.selectbox("⏱️ Timeframe", list(timeframe_map.keys()), index=1)
         days_limit = timeframe_map[selected_label]
 
-    # --- CORRECTION ICI : Bouton épuré ---
     if st.button("🚀 Launch Monitoring", type="primary"):
         client = get_openai_client()
         if client and topic:
-            # On garde l'info dans le spinner pour confirmer que ça tourne bien avec le bon paramètre
             with st.spinner(f"📡 MIA is scanning the horizon... ({selected_label})"):
                 try:
-                    # 1. Recherche avec limite de temps
                     query = f"New regulations and guidelines for {topic} in {', '.join(selected_markets)} released recently"
                     raw_data, error = run_deep_search(query, days=days_limit)
-                    
-                    if not raw_data:
-                        st.error(f"Search failed: {error}")
+                    if not raw_data: st.error(f"Search failed: {error}")
                     else:
-                        # 2. Prompt mis à jour avec le label temporel
                         prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
-                        res = client.chat.completions.create(
-                            model=config.OPENAI_MODEL,
-                            messages=[{"role": "user", "content": prompt}],
-                            temperature=0.1,
-                            response_format={"type": "json_object"}
-                        )
+                        res = client.chat.completions.create(model=config.OPENAI_MODEL, messages=[{"role": "user", "content": prompt}], temperature=0.1, response_format={"type": "json_object"})
                         st.session_state["last_mia_results"] = json.loads(res.choices[0].message.content)
-                        
                         log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
                         st.rerun()
                 except Exception as e: st.error(f"Error: {e}")
@@ -405,17 +388,13 @@ def page_mia():
         st.markdown("### 📋 Monitoring Report")
         st.info(f"**Executive Summary:** {results.get('executive_summary', 'No summary.')}")
         st.markdown("---")
-        
         items = results.get("items", [])
-        if not items:
-            st.warning("No significant updates found for this period.")
-        
+        if not items: st.warning("No significant updates found.")
         for item in items:
             impact = item.get('impact', 'Low').lower()
             if impact == 'high': icon = "🔴"
             elif impact == 'medium': icon = "🟡"
             else: icon = "🟢"
-            
             with st.container():
                 c1, c2 = st.columns([0.1, 0.9])
                 with c1: st.markdown(f"## {icon}")
@@ -509,7 +488,8 @@ def render_sidebar():
         st.markdown("---")
         pages = ["Dashboard", "OlivIA", "EVA", "MIA", "Admin"]
         curr = st.session_state["current_page"]
-        sel = st.radio("NAV", pages, index=pages.index(curr) if curr in pages else 0, label_visibility="collapsed")
+        idx = pages.index(curr) if curr in pages else 0
+        sel = st.radio("NAV", pages, index=idx)
         if sel != curr: navigate_to(sel)
         st.markdown("---")
         if st.checkbox("Dark Mode", value=st.session_state["dark_mode"]): st.session_state["dark_mode"]=True; st.rerun()
