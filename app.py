@@ -24,6 +24,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Configuration MIA
 if "mia" not in config.AGENTS:
     config.AGENTS["mia"] = {
         "name": "MIA",
@@ -31,7 +32,7 @@ if "mia" not in config.AGENTS:
         "description": "Market Intelligence Agent (Regulatory Watch & Monitoring)."
     }
 
-# LISTE DE SECOURS (FALLBACK)
+# Liste de secours
 DEFAULT_DOMAINS = [
     "eur-lex.europa.eu", "europa.eu", "echa.europa.eu", "cenelec.eu", 
     "single-market-economy.ec.europa.eu",
@@ -64,7 +65,7 @@ def init_session_state():
 init_session_state()
 
 # =============================================================================
-# 2. GESTION DES DONNÉES (GOOGLE SHEETS - SÉCURISÉE)
+# 2. GESTION DES DONNÉES (GOOGLE SHEETS)
 # =============================================================================
 @st.cache_resource
 def get_gsheet_workbook():
@@ -98,19 +99,11 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
         try: log_sheet = wb.worksheet("Logs")
         except: log_sheet = wb.add_worksheet(title="Logs", rows=1000, cols=6)
         
-        # Réparation automatique des headers si la feuille est vide
         if not log_sheet.cell(1, 1).value:
             log_sheet.update("A1:F1", [["Date", "Time", "Report ID", "Type", "Details", "Metrics"]])
             
         now = datetime.now()
-        log_sheet.append_row([
-            now.strftime("%Y-%m-%d"), 
-            now.strftime("%H:%M:%S"), 
-            report_id, 
-            report_type, 
-            details, 
-            extra_metrics
-        ])
+        log_sheet.append_row([now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), report_id, report_type, details, extra_metrics])
     except: pass
 
 # --- HELPERS BDD ---
@@ -177,10 +170,6 @@ def update_domain(idx, name):
 # =============================================================================
 # 4. API & SEARCH & CACHING
 # =============================================================================
-def navigate_to(page):
-    st.session_state["current_page"] = page
-    st.rerun()
-
 def get_api_key():
     return st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
 
@@ -274,9 +263,9 @@ def get_logo_html():
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
     return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 15px;">'
 
-# --- THEME STABLE (SAFE MODE) ---
+# --- THEME CSS CLEAN (Sans Hacks) ---
 def apply_theme():
-    # CSS minimaliste pour éviter les conflits
+    # CSS minimaliste pour les composants custom uniquement
     st.markdown("""
     <style>
     /* Carte Info */
@@ -284,19 +273,10 @@ def apply_theme():
         padding: 2rem; border-radius: 12px; border: 1px solid #E2E8F0; 
         min-height: 220px; display: flex; flex-direction: column; justify-content: flex-start;
     }
-    
     /* Boutons Primaires */
     div.stButton > button:first-child { 
         background-color: #295A63 !important; color: white !important; 
         border-radius: 8px; font-weight: 600; width: 100%; border: none;
-    }
-    
-    /* Bouton Fantôme Logo */
-    div[data-testid="stSidebar"] .stButton:first-of-type {
-        position: absolute; top: 1rem; left: 1rem; width: 85%; height: 100px; z-index: 999;
-    }
-    div[data-testid="stSidebar"] .stButton:first-of-type button {
-        width: 100%; height: 100%; opacity: 0; cursor: pointer;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -359,8 +339,7 @@ def page_mia():
                     if json_str:
                         st.session_state["last_mia_results"] = json.loads(json_str)
                         log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
-                        st.toast("Monitoring Complete!", icon="🎉")
-                        st.rerun()
+                        st.rerun() # Rerun légitime ici (après action utilisateur)
                     else: st.error("Analysis failed.")
 
     results = st.session_state.get("last_mia_results")
@@ -425,7 +404,6 @@ def page_olivia():
                 new_id = str(uuid.uuid4())
                 st.session_state["last_olivia_id"] = new_id
                 log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)}")
-                st.toast("Analysis Ready!", icon="✅")
                 st.rerun()
             except Exception as e: st.error(str(e))
 
@@ -434,12 +412,11 @@ def page_olivia():
         st.success("✅ Analysis Generated")
         st.markdown(st.session_state["last_olivia_report"])
         st.markdown("---")
-        # Sécurité PDF : si ça plante, on propose le texte
         try:
             pdf = generate_pdf_report("Regulatory Analysis Report", st.session_state["last_olivia_report"], st.session_state.get("last_olivia_id", "ID"))
             st.download_button("📥 Download PDF", pdf, f"VALHALLAI_Report.pdf", "application/pdf")
         except:
-            st.download_button("📥 Download Raw Text", st.session_state["last_olivia_report"], "report.txt")
+            st.download_button("📥 Download Raw Text", st.session_state["last_olivia_report"], "report.md")
 
 def page_eva():
     st.title("🔍 EVA Workspace")
@@ -453,19 +430,18 @@ def page_eva():
                 st.session_state["last_eva_report"] = resp
                 st.session_state["last_eva_id"] = str(uuid.uuid4())
                 log_usage("EVA", st.session_state["last_eva_id"], f"File: {up.name}")
-                st.toast("Audit Complete!", icon="🔍")
+                st.rerun()
             except Exception as e: st.error(str(e))
     
     if st.session_state.get("last_eva_report"):
         st.markdown("### Audit Results")
         st.markdown(st.session_state["last_eva_report"])
         st.markdown("---")
-        # Sécurité PDF
         try:
             pdf = generate_pdf_report("Compliance Audit Report", st.session_state["last_eva_report"], st.session_state.get("last_eva_id", "ID"))
             st.download_button("📥 Download PDF", pdf, f"VALHALLAI_Audit.pdf", "application/pdf")
         except:
-            st.download_button("📥 Download Raw Text", st.session_state["last_eva_report"], "audit.txt")
+            st.download_button("📥 Download Text", st.session_state["last_eva_report"], "audit.md")
 
 def page_dashboard():
     st.title("Dashboard")
@@ -476,30 +452,41 @@ def page_dashboard():
     with c1: 
         st.markdown(f"""<div class="info-card"><h3>🤖 OlivIA</h3><p class='sub-text'>{config.AGENTS['olivia']['description']}</p></div>""", unsafe_allow_html=True)
         st.write("")
-        if st.button("Launch OlivIA ->"): navigate_to("OlivIA")
+        if st.button("Launch OlivIA ->"): 
+            st.session_state["current_page"] = "OlivIA"
+            st.rerun()
     with c2: 
         st.markdown(f"""<div class="info-card"><h3>🔍 EVA</h3><p class='sub-text'>{config.AGENTS['eva']['description']}</p></div>""", unsafe_allow_html=True)
         st.write("")
-        if st.button("Launch EVA ->"): navigate_to("EVA")
+        if st.button("Launch EVA ->"): 
+            st.session_state["current_page"] = "EVA"
+            st.rerun()
     with c3: 
         st.markdown(f"""<div class="info-card"><h3>{config.AGENTS['mia']['icon']} {config.AGENTS['mia']['name']}</h3><p class='sub-text'>{config.AGENTS['mia']['description']}</p></div>""", unsafe_allow_html=True)
         st.write("")
-        if st.button("Launch MIA ->"): navigate_to("MIA")
+        if st.button("Launch MIA ->"): 
+            st.session_state["current_page"] = "MIA"
+            st.rerun()
 
 def render_sidebar():
     with st.sidebar:
-        if st.button("Home", key="logo_home_btn"): navigate_to("Dashboard")
         st.markdown(get_logo_html(), unsafe_allow_html=True)
         st.markdown(f"<div class='logo-text'>{config.APP_NAME}</div>", unsafe_allow_html=True)
         st.markdown("---")
+        
+        # NAVIGATION ROBUSTE (Sans Callback on_change, pour éviter les bugs)
         pages = ["Dashboard", "OlivIA", "EVA", "MIA", "Admin"]
         curr = st.session_state["current_page"]
         
-        # Navigation fluide sans rerun
-        idx = pages.index(curr) if curr in pages else 0
-        def on_nav_change(): st.session_state["current_page"] = st.session_state["nav_radio"]
-        st.radio("NAV", pages, index=idx, key="nav_radio", on_change=on_nav_change, label_visibility="collapsed")
+        # Si la page actuelle n'est pas dans la liste (ex: après reload), reset Dashboard
+        if curr not in pages: curr = "Dashboard"
         
+        selection = st.radio("NAV", pages, index=pages.index(curr), label_visibility="collapsed")
+        
+        if selection != curr:
+            st.session_state["current_page"] = selection
+            st.rerun()
+
         st.markdown("---")
         if st.button("Log Out"): logout(); st.rerun()
 
