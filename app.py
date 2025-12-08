@@ -18,7 +18,7 @@ if "authenticated" not in st.session_state:
 if "current_page" not in st.session_state:
     st.session_state["current_page"] = "Dashboard"
 if "dark_mode" not in st.session_state:
-    st.session_state["dark_mode"] = False # Par défaut en clair
+    st.session_state["dark_mode"] = False
 
 # Fonction de navigation interne
 def navigate_to(page_name):
@@ -34,19 +34,19 @@ def get_theme_css():
         card_bg = "#1A3C42"       # Vert légèrement plus clair
         text_color = "#FFFFFF"
         sub_text_color = "#A0B0B5"
-        primary_color = "#C8A951" # Gold pour les actions en mode sombre
-        button_text = "#000000"   # Texte noir sur bouton Or
+        primary_color = "#C8A951" # Gold (Action)
+        button_text = "#000000"   # Texte NOIR sur bouton Gold
         border_color = "#295A63"
         input_bg = "#13363C"
         sidebar_bg = "#0F2E33"
     else:
-        # MODE CLAIR (Racing Day - Apple Style)
-        bg_color = "#F5F7F9"      # Gris bleuté très pâle (plus pro que le blanc pur)
-        card_bg = "#FFFFFF"       # Blanc pur pour les cartes
-        text_color = "#1A202C"    # Noir graphite (pas noir pur, plus doux)
+        # MODE CLAIR (Racing Day)
+        bg_color = "#F5F7F9"      # Gris bleuté pâle
+        card_bg = "#FFFFFF"       # Blanc pur
+        text_color = "#1A202C"    # Noir graphite
         sub_text_color = "#4A5568"
-        primary_color = "#295A63" # Racing Green pour les actions
-        button_text = "#FFFFFF"   # Texte BLANC forcé sur fond Vert
+        primary_color = "#295A63" # Racing Green (Action)
+        button_text = "#FFFFFF"   # Texte BLANC sur bouton Green
         border_color = "#E2E8F0"
         input_bg = "#FFFFFF"
         sidebar_bg = "#FFFFFF"
@@ -77,16 +77,12 @@ def get_theme_css():
     p, li, .stMarkdown {{ color: {text_color}; font-weight: 400; line-height: 1.6; }}
     .sub-text {{ color: {sub_text_color}; font-size: 0.9rem; }}
 
-    /* SIDEBAR NAVIGATION (PRO STYLE) */
+    /* SIDEBAR NAVIGATION */
     section[data-testid="stSidebar"] {{
         background-color: {sidebar_bg};
         border-right: 1px solid {border_color};
     }}
-    /* Cache les ronds des radio buttons */
-    div[role="radiogroup"] > label > div:first-child {{
-        display: none !important;
-    }}
-    /* Transforme les labels en boutons de navigation */
+    div[role="radiogroup"] > label > div:first-child {{ display: none !important; }}
     div[role="radiogroup"] label {{
         padding: 12px 20px;
         border-radius: 6px;
@@ -97,30 +93,15 @@ def get_theme_css():
         color: {sub_text_color};
         font-weight: 500;
     }}
-    /* Hover effect */
     div[role="radiogroup"] label:hover {{
         background-color: {bg_color};
         color: {primary_color};
     }}
-    /* Selected Item Styling */
     div[role="radiogroup"] label[data-checked="true"] {{
         background-color: {primary_color if not st.session_state["dark_mode"] else "#C8A951"} !important;
         color: {button_text if not st.session_state["dark_mode"] else "#000000"} !important;
         font-weight: 600;
         box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    }}
-
-    /* CARDS & CONTAINERS */
-    .info-card {{
-        background-color: {card_bg};
-        padding: 2rem;
-        border-radius: 12px;
-        border: 1px solid {border_color};
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
     }}
 
     /* INPUTS */
@@ -136,22 +117,47 @@ def get_theme_css():
         box-shadow: 0 0 0 1px {primary_color};
     }}
     
-    /* BUTTONS (CORRECTION CONTRASTE) */
-    .stButton>button {{
+    /* --- CORRECTIF BOUTONS BLINDÉ --- */
+    /* Cible le bouton ET tous ses enfants directs (p) */
+    div.stButton > button:first-child {{
         background-color: {primary_color} !important;
-        color: {button_text} !important; /* FORCE LA COULEUR DU TEXTE */
+        color: {button_text} !important;
         border-radius: 8px;
         border: none;
         padding: 0.6rem 1.2rem;
         font-family: 'Montserrat', sans-serif;
         font-weight: 600;
         width: 100%;
-        transition: all 0.2s;
         margin-top: 10px;
+        transition: all 0.2s;
     }}
-    .stButton>button:hover {{
+    
+    /* Force la couleur sur le texte interne du bouton */
+    div.stButton > button:first-child p {{
+        color: {button_text} !important;
+    }}
+
+    /* Effet Survol */
+    div.stButton > button:first-child:hover {{
         filter: brightness(1.1);
         box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        color: {button_text} !important;
+    }}
+    div.stButton > button:first-child:active {{
+        color: {button_text} !important;
+    }}
+
+    /* CARDS */
+    .info-card {{
+        background-color: {card_bg};
+        padding: 2rem;
+        border-radius: 12px;
+        border: 1px solid {border_color};
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
     }}
     
     /* ALERTS */
@@ -222,7 +228,6 @@ def main_app():
         st.markdown(f"<div style='margin-top: -15px; color: {'#A0B0B5' if st.session_state['dark_mode'] else '#558D98'}; font-size: 0.8rem; letter-spacing: 1px; font-weight: 600;'>REGULATORY SHIELD</div>", unsafe_allow_html=True)
         st.markdown("---")
         
-        # NAVIGATION
         pages_list = ["Dashboard", "OlivIA", "EVA"]
         
         if st.session_state["current_page"] not in pages_list:
@@ -243,7 +248,7 @@ def main_app():
 
         st.markdown("---")
         
-        # DARK MODE TOGGLE
+        # DARK MODE
         col_dark, col_lbl = st.columns([1, 4])
         with col_dark:
             is_dark = st.checkbox("", value=st.session_state["dark_mode"])
@@ -259,7 +264,7 @@ def main_app():
             logout()
             st.rerun()
 
-    # --- API CLIENT ---
+    # --- API ---
     api_key = get_api_key()
     client = OpenAI(api_key=api_key) if api_key else None
 
@@ -269,7 +274,7 @@ def main_app():
     if st.session_state["current_page"] == "Dashboard":
         st.markdown("# Dashboard")
         st.markdown(f"<span class='sub-text'>Simplify today, amplify tomorrow.</span>", unsafe_allow_html=True)
-        st.markdown("###") # Spacer
+        st.markdown("###")
         
         col1, col2 = st.columns(2)
         
