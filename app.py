@@ -47,7 +47,7 @@ def init_session_state():
         "last_eva_report": None,
         "last_eva_id": None,
         "editing_market_index": None,
-        "editing_domain_index": None,
+        "editing_domain_index": None, # Utilisé pour l'édition des domaines
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -118,7 +118,7 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
     except Exception as e:
         print(f"Logging failed: {e}")
 
-# --- GESTION DES MARCHÉS (Onglet Sheet1) ---
+# --- GESTION DES MARCHÉS ---
 def get_markets():
     wb = get_gsheet_workbook()
     if wb:
@@ -161,16 +161,14 @@ def update_market(index, new_name):
             st.cache_data.clear()
         except Exception as e: st.error(f"Update Error: {e}")
 
-# --- GESTION DES DOMAINES DEEP SEARCH (Onglet "Watch_domains") ---
+# --- GESTION DES DOMAINES (Watch_domains) ---
 def get_domains():
     wb = get_gsheet_workbook()
     if wb:
         try:
             try:
-                # ICI : Changement du nom de l'onglet
                 sheet = wb.worksheet("Watch_domains")
             except:
-                # Création automatique avec le nouveau nom
                 sheet = wb.add_worksheet(title="Watch_domains", rows=100, cols=1)
                 for d in DEFAULT_DOMAINS: sheet.append_row([d])
                 st.cache_data.clear()
@@ -185,7 +183,6 @@ def add_domain(domain_name):
     wb = get_gsheet_workbook()
     if wb:
         try:
-            # ICI : Changement du nom de l'onglet
             sheet = wb.worksheet("Watch_domains")
             current = sheet.col_values(1)
             if domain_name not in current:
@@ -199,11 +196,20 @@ def remove_domain(index):
     wb = get_gsheet_workbook()
     if wb:
         try:
-            # ICI : Changement du nom de l'onglet
             sheet = wb.worksheet("Watch_domains")
             sheet.delete_rows(index + 1)
             st.cache_data.clear()
         except Exception as e: st.error(f"Delete Error: {e}")
+
+def update_domain(index, new_name):
+    """Met à jour un nom de domaine."""
+    wb = get_gsheet_workbook()
+    if wb:
+        try:
+            sheet = wb.worksheet("Watch_domains")
+            sheet.update_cell(index + 1, 1, new_name)
+            st.cache_data.clear()
+        except Exception as e: st.error(f"Update Error: {e}")
 
 # =============================================================================
 # 4. FONCTIONS UTILITAIRES & DEEP SEARCH
@@ -222,7 +228,6 @@ def get_openai_client():
     return None
 
 def run_deep_search(query):
-    """Exécute une recherche web via Tavily en utilisant la liste dynamique."""
     try:
         tavily_key = st.secrets.get("TAVILY_API_KEY")
         if not tavily_key:
@@ -230,14 +235,13 @@ def run_deep_search(query):
             
         tavily = TavilyClient(api_key=tavily_key)
         
-        # Récupération de la liste dynamique des domaines autorisés
         authorized_domains, _ = get_domains()
         
         response = tavily.search(
             query=query,
             search_depth="advanced",
             max_results=3,
-            include_domains=authorized_domains # Utilisation de la liste "Watch_domains"
+            include_domains=authorized_domains
         )
         
         context_text = "### LIVE REGULATORY DATA (FROM WEB):\n"
@@ -291,7 +295,7 @@ def logout():
     st.session_state["current_page"] = "Dashboard"
 
 # =============================================================================
-# 6. PROMPTS IA
+# 6. PROMPTS IA (EXPERT LEVEL)
 # =============================================================================
 def create_olivia_prompt(description, countries):
     markets_str = ", ".join(countries)
@@ -424,8 +428,6 @@ def page_admin():
         return
     
     wb = get_gsheet_workbook()
-    
-    # Header Status
     col_status, col_refresh = st.columns([3, 1])
     with col_status:
         if wb: st.success(f"✅ Database Connected: {wb.title}")
@@ -434,7 +436,6 @@ def page_admin():
         if st.button("🔄 Force Refresh"):
             st.cache_data.clear(); st.rerun()
 
-    # TABS
     tab_markets, tab_domains = st.tabs(["🌍 Markets Management", "🕵️‍♂️ Deep Search Sources"])
 
     # --- TAB 1: MARCHÉS ---
@@ -451,9 +452,18 @@ def page_admin():
         
         st.markdown("### Active Markets")
         for i, m in enumerate(current_markets):
-            c1, c2 = st.columns([4, 1])
-            c1.info(f"🌍 {m}")
-            if c2.button("🗑️", key=f"del_m_{i}"): remove_market(i); st.rerun()
+            c1, c2, c3 = st.columns([4, 1, 1])
+            if st.session_state.get("editing_market_index") != i:
+                c1.info(f"🌍 {m}")
+                if c2.button("✏️", key=f"ed_m_{i}"): st.session_state["editing_market_index"] = i; st.rerun()
+                if c3.button("🗑️", key=f"del_m_{i}"): remove_market(i); st.rerun()
+            else:
+                new_val = c1.text_input("Edit", value=m, key=f"val_m_{i}", label_visibility="collapsed")
+                if c2.button("💾", key=f"save_m_{i}"):
+                    update_market(i, new_val)
+                    st.session_state["editing_market_index"] = None; st.rerun()
+                if c3.button("❌", key=f"cancel_m_{i}"):
+                    st.session_state["editing_market_index"] = None; st.rerun()
 
     # --- TAB 2: DOMAINES DEEP SEARCH ---
     with tab_domains:
@@ -471,9 +481,20 @@ def page_admin():
         
         st.markdown("### Authorized Domains")
         for i, d in enumerate(current_domains):
-            c1, c2 = st.columns([4, 1])
-            c1.success(f"🌐 {d}")
-            if c2.button("🗑️", key=f"del_d_{i}"): remove_domain(i); st.rerun()
+            c1, c2, c3 = st.columns([4, 1, 1])
+            # Mode lecture
+            if st.session_state.get("editing_domain_index") != i:
+                c1.success(f"🌐 {d}")
+                if c2.button("✏️", key=f"ed_d_{i}"): st.session_state["editing_domain_index"] = i; st.rerun()
+                if c3.button("🗑️", key=f"del_d_{i}"): remove_domain(i); st.rerun()
+            # Mode édition
+            else:
+                new_val = c1.text_input("Edit", value=d, key=f"val_d_{i}", label_visibility="collapsed")
+                if c2.button("💾", key=f"save_d_{i}"):
+                    update_domain(i, new_val)
+                    st.session_state["editing_domain_index"] = None; st.rerun()
+                if c3.button("❌", key=f"cancel_d_{i}"):
+                    st.session_state["editing_domain_index"] = None; st.rerun()
 
 def page_olivia():
     agent = config.AGENTS["olivia"]
@@ -490,7 +511,6 @@ def page_olivia():
         if st.button("Generate Report", type="primary"):
             client = get_openai_client()
             if client and desc:
-                # DEEP SEARCH ACTIVATION
                 target_regions = ["EU", "USA", "China", "UK"]
                 use_deep_search = any(r in str(countries) for r in target_regions)
                 deep_context = ""
