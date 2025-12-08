@@ -322,21 +322,21 @@ def apply_theme():
     div[data-baseweb="checkbox"] div[aria-checked="true"] {{ background-color: {c['primary']} !important; border-color: {c['primary']} !important; }}
     .stTextInput > div > div[data-baseweb="input"]:focus-within {{ border-color: {c['primary']} !important; box-shadow: 0 0 0 1px {c['primary']} !important; }}
     
-    /* BOUTON FANTÔME POUR LE LOGO (Navigation) */
-    div[data-testid="stSidebar"] .stButton:first-of-type {
+    /* BOUTON FANTÔME POUR LE LOGO (Correctif CSS) */
+    div[data-testid="stSidebar"] .stButton:first-of-type {{
         position: absolute;
         top: 1rem;
         left: 1rem;
         width: 85%;
         height: 100px;
         z-index: 999;
-    }
-    div[data-testid="stSidebar"] .stButton:first-of-type button {
+    }}
+    div[data-testid="stSidebar"] .stButton:first-of-type button {{
         width: 100%;
         height: 100%;
         opacity: 0;
         cursor: pointer;
-    }
+    }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -437,6 +437,7 @@ def page_mia():
             selected_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"])
             
         with c_legend:
+            # Spacer pour aligner verticalement avec les boîtes de saisie
             st.write("") 
             st.write("")
             st.markdown(
