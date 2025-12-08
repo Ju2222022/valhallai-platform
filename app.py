@@ -215,7 +215,7 @@ def main_app():
         with col1: 
             desc = st.text_area("Product Definition", height=200, placeholder="Ex: Medical device class IIa...")
         with col2:
-            countries = st.multiselect("Markets", ["EU (CE)", "USA (FDA)", "China", "UK"], default=["EU (CE)"])
+            countries = st.multiselect("Markets", ["Europe", "USA", "China", "UK", Canada], default=["EU"])
             output_lang = st.selectbox("Output Language", ["English", "French", "German"])
             
             st.write("")
