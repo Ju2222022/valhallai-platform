@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import io
 import base64
+from datetime import datetime
 from openai import OpenAI
 from pypdf import PdfReader
 import gspread 
@@ -30,6 +31,7 @@ def init_session_state():
         "current_page": "Dashboard",
         "dark_mode": False,
         "last_olivia_report": None,
+        "last_eva_report": None, # Nouveau pour persistance EVA
         "editing_market_index": None,
     }
     for key, value in defaults.items():
@@ -198,7 +200,7 @@ def create_olivia_prompt(description, countries, output_lang):
     markets_str = ", ".join(countries)
     return f"""You are OlivIA (VALHALLAI). Product: {description} | Markets: {markets_str}. 
     Mission: List regulatory requirements strictly in {output_lang}. Translate all headers.
-    Format: Markdown tables. Be professional."""
+    Format: Markdown tables. Be professional and concise."""
 
 def create_eva_prompt(context, doc_text, output_lang):
     return f"""You are EVA (VALHALLAI). Context: {context}. Doc: '''{doc_text[:6000]}'''. 
@@ -293,7 +295,8 @@ def page_olivia():
     with col2:
         countries = st.multiselect("Target Markets", available_markets, default=[available_markets[0]] if available_markets else None)
         output_lang = st.selectbox("Language", config.AVAILABLE_LANGUAGES)
-        if st.button("Generate Report"):
+        
+        if st.button("Generate Report", type="primary"):
             client = get_openai_client()
             if client and desc:
                 with st.spinner("Analyzing..."):
@@ -307,23 +310,28 @@ def page_olivia():
                         st.rerun()
                     except Exception as e: st.error(str(e))
     
+    # Affichage du rapport et bouton export
     if st.session_state["last_olivia_report"]:
         st.markdown("---")
         st.success("✅ Analysis Generated Successfully")
+        st.markdown(st.session_state["last_olivia_report"])
         
-        # --- PDF BUTTON ---
-        col_dl1, col_dl2 = st.columns([1, 4])
-        with col_dl1:
+        st.markdown("---")
+        
+        # Bouton export PDF en bas
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
+        file_name = f"VALHALLAI_Report_{timestamp}.pdf"
+        
+        col_space, col_btn = st.columns([4, 1])
+        with col_btn:
             pdf_data = generate_pdf_report("Regulatory Analysis Report", st.session_state["last_olivia_report"])
             st.download_button(
-                label="📄 Download PDF",
+                label="📥 Download PDF",
                 data=pdf_data,
-                file_name="VALHALLAI_Olivia_Report.pdf",
+                file_name=file_name,
                 mime="application/pdf",
+                use_container_width=True
             )
-        # ------------------
-        
-        st.markdown(st.session_state["last_olivia_report"])
 
 def page_dashboard():
     st.title("Dashboard")
@@ -345,7 +353,7 @@ def page_eva():
     up = st.file_uploader("PDF", type="pdf")
     lang = st.selectbox("Audit Language", config.AVAILABLE_LANGUAGES)
     
-    if st.button("Audit"):
+    if st.button("Run Audit", type="primary"):
         client = get_openai_client()
         if client and up:
             with st.spinner("Auditing..."):
@@ -354,21 +362,31 @@ def page_eva():
                     res = client.chat.completions.create(
                         model="gpt-4o", messages=[{"role":"user","content":create_eva_prompt(ctx,txt,lang)}], temperature=config.OPENAI_TEMPERATURE
                     )
-                    st.markdown("### Audit Results")
-                    st.markdown(res.choices[0].message.content)
-                    
-                    # --- PDF BUTTON ---
-                    st.markdown("---")
-                    pdf_data = generate_pdf_report("Compliance Audit Report", res.choices[0].message.content)
-                    st.download_button(
-                        label="📄 Download Audit PDF",
-                        data=pdf_data,
-                        file_name="VALHALLAI_EVA_Audit.pdf",
-                        mime="application/pdf",
-                    )
-                    # ------------------
-                    
+                    # Persistance du résultat pour ne pas le perdre au refresh du bouton download
+                    st.session_state["last_eva_report"] = res.choices[0].message.content
                 except Exception as e: st.error(str(e))
+
+    # Affichage du résultat si disponible
+    if st.session_state.get("last_eva_report"):
+        st.markdown("### Audit Results")
+        st.markdown(st.session_state["last_eva_report"])
+        
+        st.markdown("---")
+        
+        # Bouton export PDF en bas
+        timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
+        file_name = f"VALHALLAI_Audit_{timestamp}.pdf"
+        
+        col_space, col_btn = st.columns([4, 1])
+        with col_btn:
+            pdf_data = generate_pdf_report("Compliance Audit Report", st.session_state["last_eva_report"])
+            st.download_button(
+                label="📥 Download PDF",
+                data=pdf_data,
+                file_name=file_name,
+                mime="application/pdf",
+                use_container_width=True
+            )
 
 def render_sidebar():
     with st.sidebar:
