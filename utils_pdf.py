@@ -20,10 +20,11 @@ def ensure_fonts_exist():
         urllib.request.urlretrieve(FONT_BOLD_URL, FONT_BOLD_PATH)
 
 class ValhallaiPDF(FPDF):
-    def __init__(self, title_doc):
+    def __init__(self, title_doc, report_id):
         ensure_fonts_exist()
         super().__init__()
         self.title_doc = title_doc
+        self.report_id = report_id # On stocke l'ID unique
         self.colors = config.COLORS["light"]
         
         # Enregistrement de la police pour gérer l'Unicode
@@ -31,20 +32,20 @@ class ValhallaiPDF(FPDF):
         self.add_font("NotoSans", style="B", fname=FONT_BOLD_PATH)
 
     def header(self):
-        # --- 1. LOGO HARMONISÉ ---
+        # --- LOGO & TITRE ---
         start_y = 12
         
         # Damier (Logo)
-        self.set_fill_color(41, 90, 99) # Primary
+        self.set_fill_color(41, 90, 99) 
         self.rect(10, start_y, 5, 5, 'F')
-        self.set_fill_color(200, 169, 81) # Accent
+        self.set_fill_color(200, 169, 81) 
         self.rect(16, start_y, 5, 5, 'F')
-        self.set_fill_color(26, 60, 66) # Dark
+        self.set_fill_color(26, 60, 66) 
         self.rect(10, start_y + 6, 5, 5, 'F')
-        self.set_fill_color(230, 213, 167) # Light
+        self.set_fill_color(230, 213, 167) 
         self.rect(16, start_y + 6, 5, 5, 'F')
 
-        # Titre "VALHALLAI"
+        # Titre
         self.set_font('NotoSans', 'B', 20)
         self.set_xy(24, start_y) 
         self.set_text_color(41, 90, 99)
@@ -56,19 +57,19 @@ class ValhallaiPDF(FPDF):
         self.set_text_color(100, 100, 100)
         self.cell(0, 5, 'REGULATORY SHIELD', ln=0)
 
-        # --- 2. INFOS DOCUMENT (Droite) ---
+        # --- INFOS DOCUMENT ---
         self.set_xy(0, start_y)
         self.set_font('NotoSans', 'B', 10)
         self.set_text_color(0, 0, 0)
         self.cell(195, 6, self.title_doc, align='R', ln=1)
         
-        # Date de génération
-        current_time = datetime.now().strftime("%d/%m/%Y - %H:%M")
+        # Date
+        current_time = datetime.now().strftime("%d/%m/%Y")
         self.set_font('NotoSans', '', 8)
         self.set_text_color(128, 128, 128)
-        self.cell(195, 4, f"Generated on: {current_time}", align='R')
+        self.cell(195, 4, f"Date: {current_time}", align='R')
 
-        # Ligne de séparation dorée
+        # Ligne séparation
         self.set_draw_color(200, 169, 81)
         self.set_line_width(0.5)
         self.line(10, 28, 200, 28)
@@ -80,42 +81,31 @@ class ValhallaiPDF(FPDF):
         self.set_text_color(128)
         self.set_draw_color(220, 220, 220)
         self.line(10, 282, 200, 282)
-        self.cell(0, 10, f'Page {self.page_no()}/{{nb}} - Valhallai Platform Confidential', align='C')
+        
+        # Affichage de l'ID Unique et pagination
+        footer_text = f'Page {self.page_no()}/{{nb}} | Ref ID: {self.report_id} | Valhallai Confidential'
+        self.cell(0, 10, footer_text, align='C')
 
     def add_formatted_content(self, markdown_text):
         self.add_page()
-        
-        # --- RÉGLAGES POUR TABLEAUX PROPRES ---
-        # 1. On réduit la taille de police par défaut (9pt) pour que les tableaux respirent
         self.set_font('NotoSans', '', 9)
-        self.set_text_color(30, 30, 30) # Gris très foncé (moins agressif que noir pur)
-        
-        # 2. On règle les lignes de dessin pour le tableau (Gris clair et fin)
-        self.set_draw_color(200, 200, 200) # Gris clair
-        self.set_line_width(0.1) # Trait très fin
+        self.set_text_color(30, 30, 30) 
+        self.set_draw_color(200, 200, 200) 
+        self.set_line_width(0.1) 
 
-        # Conversion Markdown -> HTML
-        html_text = markdown.markdown(
-            markdown_text, 
-            extensions=['tables', 'fenced_code']
-        )
+        html_text = markdown.markdown(markdown_text, extensions=['tables', 'fenced_code'])
 
-        # --- STYLING SÉCURISÉ ---
-        # On garde uniquement les styles de texte supportés à 100%
         primary_color = (41, 90, 99)
-        
         tag_styles = {
             "h1": FontFace(color=primary_color, emphasis="B", size_pt=16),
             "h2": FontFace(color=primary_color, emphasis="B", size_pt=14),
             "h3": FontFace(color=(26, 60, 66), emphasis="B", size_pt=12),
-            # On retire tout styling de table ici pour éviter les bugs
         }
 
-        # Écriture du HTML
         self.write_html(html_text, table_line_separators=True, tag_styles=tag_styles)
 
-def generate_pdf_report(title, content):
-    pdf = ValhallaiPDF(title)
+def generate_pdf_report(title, content, report_id):
+    pdf = ValhallaiPDF(title, report_id)
     pdf.alias_nb_pages()
     pdf.add_formatted_content(content)
     return bytes(pdf.output())
