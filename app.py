@@ -18,7 +18,7 @@ if "authenticated" not in st.session_state:
 if "current_page" not in st.session_state:
     st.session_state["current_page"] = "Dashboard"
 if "dark_mode" not in st.session_state:
-    st.session_state["dark_mode"] = False
+    st.session_state["dark_mode"] = False # Par défaut en clair
 
 # Fonction de navigation interne
 def navigate_to(page_name):
@@ -33,23 +33,27 @@ def get_theme_css():
         bg_color = "#0F2E33"      # Vert très sombre
         card_bg = "#1A3C42"       # Vert légèrement plus clair
         text_color = "#FFFFFF"
-        primary_color = "#C8A951" # Gold
-        secondary_color = "#A0B0B5"
+        sub_text_color = "#A0B0B5"
+        primary_color = "#C8A951" # Gold pour les actions en mode sombre
+        button_text = "#000000"   # Texte noir sur bouton Or
         border_color = "#295A63"
         input_bg = "#13363C"
+        sidebar_bg = "#0F2E33"
     else:
-        # MODE CLAIR (Racing Day)
-        bg_color = "#FAFAFA"      # Blanc cassé
-        card_bg = "#FFFFFF"
-        text_color = "#212121"
-        primary_color = "#295A63" # Racing Green
-        secondary_color = "#558D98"
-        border_color = "#E1E3E6"
+        # MODE CLAIR (Racing Day - Apple Style)
+        bg_color = "#F5F7F9"      # Gris bleuté très pâle (plus pro que le blanc pur)
+        card_bg = "#FFFFFF"       # Blanc pur pour les cartes
+        text_color = "#1A202C"    # Noir graphite (pas noir pur, plus doux)
+        sub_text_color = "#4A5568"
+        primary_color = "#295A63" # Racing Green pour les actions
+        button_text = "#FFFFFF"   # Texte BLANC forcé sur fond Vert
+        border_color = "#E2E8F0"
         input_bg = "#FFFFFF"
+        sidebar_bg = "#FFFFFF"
 
     return f"""
     <style>
-    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&family=Inter:wght@300;400;600&display=swap');
+    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
 
     /* BASE */
     .stApp {{
@@ -67,51 +71,56 @@ def get_theme_css():
     /* TYPOGRAPHY */
     h1, h2, h3 {{
         font-family: 'Montserrat', sans-serif !important;
-        color: {primary_color} !important;
+        color: {primary_color if not st.session_state["dark_mode"] else "#FFFFFF"} !important;
         letter-spacing: -0.5px;
     }}
-    p, li, .stMarkdown {{ color: {text_color}; font-weight: 300; line-height: 1.6; }}
+    p, li, .stMarkdown {{ color: {text_color}; font-weight: 400; line-height: 1.6; }}
+    .sub-text {{ color: {sub_text_color}; font-size: 0.9rem; }}
 
-    /* SIDEBAR NAVIGATION (PRO STYLE - NO BUBBLES) */
+    /* SIDEBAR NAVIGATION (PRO STYLE) */
     section[data-testid="stSidebar"] {{
-        background-color: {bg_color};
+        background-color: {sidebar_bg};
         border-right: 1px solid {border_color};
     }}
     /* Cache les ronds des radio buttons */
     div[role="radiogroup"] > label > div:first-child {{
         display: none !important;
     }}
-    /* Transforme les labels en boutons */
+    /* Transforme les labels en boutons de navigation */
     div[role="radiogroup"] label {{
         padding: 12px 20px;
-        border-radius: 8px;
-        margin-bottom: 5px;
+        border-radius: 6px;
+        margin-bottom: 8px;
         border: 1px solid transparent;
         transition: all 0.2s;
         cursor: pointer;
-        color: {text_color};
+        color: {sub_text_color};
+        font-weight: 500;
     }}
     /* Hover effect */
     div[role="radiogroup"] label:hover {{
-        background-color: {card_bg};
-        border-color: {border_color};
+        background-color: {bg_color};
         color: {primary_color};
     }}
     /* Selected Item Styling */
     div[role="radiogroup"] label[data-checked="true"] {{
-        background-color: {primary_color} !important;
-        color: #FFFFFF !important;
+        background-color: {primary_color if not st.session_state["dark_mode"] else "#C8A951"} !important;
+        color: {button_text if not st.session_state["dark_mode"] else "#000000"} !important;
         font-weight: 600;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
     }}
 
     /* CARDS & CONTAINERS */
     .info-card {{
         background-color: {card_bg};
-        padding: 1.5rem;
+        padding: 2rem;
         border-radius: 12px;
         border: 1px solid {border_color};
-        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05), 0 2px 4px -1px rgba(0, 0, 0, 0.03);
+        height: 100%;
+        display: flex;
+        flex-direction: column;
+        justify-content: space-between;
     }}
 
     /* INPUTS */
@@ -120,12 +129,17 @@ def get_theme_css():
         border: 1px solid {border_color};
         color: {text_color};
         border-radius: 8px;
+        padding: 10px;
+    }}
+    .stTextInput>div>div>input:focus, .stTextArea>div>div>textarea:focus {{
+        border-color: {primary_color};
+        box-shadow: 0 0 0 1px {primary_color};
     }}
     
-    /* BUTTONS */
+    /* BUTTONS (CORRECTION CONTRASTE) */
     .stButton>button {{
-        background-color: {primary_color};
-        color: #FFFFFF;
+        background-color: {primary_color} !important;
+        color: {button_text} !important; /* FORCE LA COULEUR DU TEXTE */
         border-radius: 8px;
         border: none;
         padding: 0.6rem 1.2rem;
@@ -133,14 +147,15 @@ def get_theme_css():
         font-weight: 600;
         width: 100%;
         transition: all 0.2s;
+        margin-top: 10px;
     }}
     .stButton>button:hover {{
-        filter: brightness(1.2);
-        box-shadow: 0 6px 12px rgba(0,0,0,0.2);
+        filter: brightness(1.1);
+        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
     }}
     
     /* ALERTS */
-    .stSuccess {{ background-color: {card_bg}; border-left: 4px solid {primary_color}; color: {text_color}; }}
+    .stSuccess {{ background-color: {card_bg}; border-left: 4px solid #295A63; color: {text_color}; }}
     .stInfo, .stWarning {{ background-color: {card_bg}; border-left: 4px solid #C8A951; color: {text_color}; }}
     
     </style>
@@ -204,14 +219,12 @@ def main_app():
     # --- SIDEBAR ---
     with st.sidebar:
         st.markdown("## VALHALLAI")
-        st.markdown("<div style='margin-top: -15px; opacity: 0.7; font-size: 0.8rem; letter-spacing: 1px;'>REGULATORY SHIELD</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='margin-top: -15px; color: {'#A0B0B5' if st.session_state['dark_mode'] else '#558D98'}; font-size: 0.8rem; letter-spacing: 1px; font-weight: 600;'>REGULATORY SHIELD</div>", unsafe_allow_html=True)
         st.markdown("---")
         
-        # NAVIGATION "PRO" (Sans bulles grâce au CSS)
-        # On utilise l'index pour synchroniser avec les boutons du dashboard
+        # NAVIGATION
         pages_list = ["Dashboard", "OlivIA", "EVA"]
         
-        # Petite sécurité si l'état est invalide
         if st.session_state["current_page"] not in pages_list:
             st.session_state["current_page"] = "Dashboard"
             
@@ -224,7 +237,6 @@ def main_app():
             label_visibility="collapsed"
         )
         
-        # Mise à jour de l'état si on clique dans la sidebar
         if selected_page != st.session_state["current_page"]:
             st.session_state["current_page"] = selected_page
             st.rerun()
@@ -234,7 +246,6 @@ def main_app():
         # DARK MODE TOGGLE
         col_dark, col_lbl = st.columns([1, 4])
         with col_dark:
-            # Checkbox simple pour le toggle
             is_dark = st.checkbox("", value=st.session_state["dark_mode"])
         with col_lbl:
             st.write("Night Mode")
@@ -257,20 +268,19 @@ def main_app():
     # 1. DASHBOARD
     if st.session_state["current_page"] == "Dashboard":
         st.markdown("# Dashboard")
-        st.markdown(f"**Simplify today, amplify tomorrow.**")
-        st.markdown("---")
+        st.markdown(f"<span class='sub-text'>Simplify today, amplify tomorrow.</span>", unsafe_allow_html=True)
+        st.markdown("###") # Spacer
         
-        # Cartes cliquables
         col1, col2 = st.columns(2)
         
         with col1:
             st.markdown("""
             <div class="info-card">
                 <h3>🤖 OlivIA</h3>
-                <p>Define product DNA & map regulatory landscape.</p>
+                <p class='sub-text'>Define product DNA & map regulatory landscape.</p>
             </div>
             """, unsafe_allow_html=True)
-            st.write("") # Spacer
+            st.write("") 
             if st.button("Launch OlivIA Analysis ->"):
                 navigate_to("OlivIA")
 
@@ -278,17 +288,18 @@ def main_app():
             st.markdown("""
             <div class="info-card">
                 <h3>🔍 EVA</h3>
-                <p>Audit technical documentation against requirements.</p>
+                <p class='sub-text'>Audit technical documentation against requirements.</p>
             </div>
             """, unsafe_allow_html=True)
-            st.write("") # Spacer
+            st.write("") 
             if st.button("Launch EVA Audit ->"):
                 navigate_to("EVA")
 
     # 2. OLIVIA
     elif st.session_state["current_page"] == "OlivIA":
         st.title("OlivIA Workspace")
-        st.markdown("Define product parameters to generate requirements.")
+        st.markdown("<span class='sub-text'>Define product parameters to generate requirements.</span>", unsafe_allow_html=True)
+        st.markdown("---")
         
         col1, col2 = st.columns([2, 1])
         with col1:
@@ -297,7 +308,7 @@ def main_app():
             countries = st.multiselect("Markets", ["EU (CE)", "USA (FDA)", "China", "UK"], default=["EU (CE)"])
             output_lang = st.selectbox("Output Language", ["English", "French", "German"])
             st.write("")
-            if st.button("Generate Report", type="primary"):
+            if st.button("Generate Report"):
                 if client and desc:
                     with st.spinner("Analyzing..."):
                         try:
@@ -318,7 +329,8 @@ def main_app():
     # 3. EVA
     elif st.session_state["current_page"] == "EVA":
         st.title("EVA Workspace")
-        st.markdown("Verify documentation compliance.")
+        st.markdown("<span class='sub-text'>Verify documentation compliance.</span>", unsafe_allow_html=True)
+        st.markdown("---")
         
         default_ctx = st.session_state.get("last_olivia_report", "")
         with st.expander("Regulatory Context", expanded=not bool(default_ctx)):
@@ -330,7 +342,7 @@ def main_app():
         with col2:
             lang = st.selectbox("Audit Language", ["English", "French"])
             st.write("")
-            if st.button("Run Audit", type="primary"):
+            if st.button("Run Audit"):
                 if client and uploaded:
                     with st.spinner("Auditing..."):
                         txt = extract_text_from_pdf(uploaded.read())
@@ -354,7 +366,7 @@ def main():
         col1, col2, col3 = st.columns([1, 1.5, 1])
         with col2:
             st.markdown("<br><br><br>", unsafe_allow_html=True)
-            st.markdown("<h1 style='text-align: center;'>VALHALLAI</h1>", unsafe_allow_html=True)
+            st.markdown("<h1 style='text-align: center; color: #295A63;'>VALHALLAI</h1>", unsafe_allow_html=True)
             st.text_input("Security Token", type="password", key="password_input", on_change=check_password)
 
 if __name__ == "__main__":
