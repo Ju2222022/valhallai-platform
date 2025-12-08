@@ -24,7 +24,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Configuration de l'agent MIA (Injectée localement)
+# Configuration de l'agent MIA (Injectée localement si absente de config.py)
 if "mia" not in config.AGENTS:
     config.AGENTS["mia"] = {
         "name": "MIA",
@@ -50,7 +50,7 @@ def init_session_state():
         "last_olivia_id": None, 
         "last_eva_report": None,
         "last_eva_id": None,
-        "last_mia_results": None, # Stockage résultats MIA
+        "last_mia_results": None,
         "editing_market_index": None,
         "editing_domain_index": None,
     }
@@ -131,7 +131,7 @@ def update_market(idx, name):
         try: wb.sheet1.update_cell(idx + 1, 1, name); st.cache_data.clear()
         except: pass
 
-# --- DOMAINES ---
+# --- DOMAINES (Watch_domains) ---
 def get_domains():
     wb = get_gsheet_workbook()
     if wb:
@@ -166,11 +166,14 @@ def update_domain(idx, name):
         except: pass
 
 # =============================================================================
-# 4. API & SEARCH
+# 4. API & SEARCH & PDF
 # =============================================================================
 def navigate_to(page):
     st.session_state["current_page"] = page
     st.rerun()
+
+def get_api_key():
+    return st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
 
 def get_openai_client():
     k = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -227,7 +230,7 @@ def logout():
     st.session_state["current_page"]="Dashboard"
 
 # =============================================================================
-# 6. PROMPTS
+# 6. PROMPTS & UI HELPERS
 # =============================================================================
 def create_olivia_prompt(desc, countries):
     return f"""ROLE: Senior Regulatory Consultant (VALHALLAI). Product: "{desc}" | Markets: {', '.join(countries)}.
@@ -240,42 +243,49 @@ def create_eva_prompt(ctx, doc):
     Structure: 1. Verdict, 2. Gap Table (Requirement|Status|Evidence|Missing), 3. Risks, 4. Recommendations."""
 
 def create_mia_prompt(topic, markets, raw_search_data):
-    """Prompt pour MIA (Market Intelligence Agent)."""
     return f"""
     ROLE: You are MIA (Market Intelligence Agent).
-    You are an expert in regulatory monitoring and technological watch.
-    
-    CONTEXT:
-    The user is monitoring the following topic: "{topic}"
-    Target Markets: {', '.join(markets)}
-    Timeframe: Last 12 months.
-    
-    RAW SEARCH DATA (From Web):
-    {raw_search_data}
-    
-    MISSION:
-    1. Filter the raw data. Keep only RELEVANT regulatory updates, official guidelines, or major industry news.
-    2. Analyze the impact of each item (High/Medium/Low).
-    3. Generate a structured JSON output.
-    
+    CONTEXT: User monitoring: "{topic}" | Markets: {', '.join(markets)} | Timeframe: Last 12 months.
+    RAW SEARCH DATA: {raw_search_data}
+    MISSION: Filter and Analyze. Keep only relevant updates.
     OUTPUT FORMAT (Strict JSON):
     {{
-        "executive_summary": "A 2-sentence summary of the regulatory climate.",
+        "executive_summary": "Summary...",
         "items": [
-            {{
-                "title": "Title of the update",
-                "date": "YYYY-MM-DD (estimate from context)",
-                "source_name": "Source (e.g. FDA)",
-                "url": "URL",
-                "summary": "One sentence description.",
-                "tags": ["Tag1", "Tag2"], 
-                "impact": "High" (or "Medium", "Low")
-            }}
+            {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["..."], "impact": "High/Medium/Low" }}
         ]
     }}
-    
-    IMPORTANT: Return ONLY the JSON. No markdown fencing.
     """
+
+def get_logo_svg():
+    colors = config.COLORS["dark" if st.session_state["dark_mode"] else "light"]
+    c1, c2 = colors["primary"], colors["accent"]
+    c3, c4 = "#1A3C42", "#E6D5A7"
+    return f"""<svg width="60" height="60" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="10" y="10" width="38" height="38" rx="8" fill="{c1}"/><rect x="52" y="10" width="38" height="38" rx="8" fill="{c2}"/>
+        <rect x="10" y="52" width="38" height="38" rx="8" fill="{c3}"/><rect x="52" y="52" width="38" height="38" rx="8" fill="{c4}"/>
+    </svg>"""
+
+def get_logo_html():
+    svg = get_logo_svg()
+    b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
+    return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 15px;">'
+
+# --- C'EST LA FONCTION QUI MANQUAIT DANS LA VERSION PRÉCÉDENTE ---
+def apply_theme():
+    mode = "dark" if st.session_state["dark_mode"] else "light"
+    c = config.COLORS[mode]
+    st.markdown(f"""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
+    .stApp {{ background-color: {c['background']}; font-family: 'Inter', sans-serif; color: {c['text']}; }}
+    h1, h2, h3 {{ font-family: 'Montserrat', sans-serif !important; color: {c['primary']} !important; }}
+    .info-card {{ background-color: {c['card']}; padding: 2rem; border-radius: 12px; border: 1px solid {c['border']}; }}
+    .logo-text {{ font-family: 'Montserrat', sans-serif; font-weight: 700; font-size: 1.4rem; color: {c['text']}; }}
+    .logo-sub {{ font-size: 0.7rem; letter-spacing: 2px; text-transform: uppercase; color: {c['text_secondary']}; font-weight: 500; }}
+    div.stButton > button:first-child {{ background-color: {c['primary']} !important; color: {c['button_text']} !important; border-radius: 8px; font-weight: 600; width: 100%;}}
+    </style>
+    """, unsafe_allow_html=True)
 
 # =============================================================================
 # 7. UI PAGES
@@ -330,19 +340,15 @@ def page_admin():
                 if c3.button("❌", key=f"cd{i}"): st.session_state["editing_domain_index"]=None; st.rerun()
 
 def page_mia():
-    # --- PAGE VEILLE : MIA ---
     agent = config.AGENTS["mia"]
     st.title(f"{agent['icon']} {agent['name']} Watch Tower")
     st.markdown(f"<span class='sub-text'>{agent['description']}</span>", unsafe_allow_html=True)
     st.markdown("---")
 
     markets, _ = get_markets()
-    
     col1, col2 = st.columns([2, 1])
-    with col1: 
-        topic = st.text_input("🔎 Watch Topic / Product", placeholder="e.g. Cybersecurity for SaMD")
-    with col2: 
-        selected_markets = st.multiselect("🌍 Markets", markets, default=[markets[0]] if markets else None)
+    with col1: topic = st.text_input("🔎 Watch Topic / Product", placeholder="e.g. Cybersecurity for SaMD")
+    with col2: selected_markets = st.multiselect("🌍 Markets", markets, default=[markets[0]] if markets else None)
 
     if st.button("🚀 Launch Monitoring (Last 12 Months)", type="primary"):
         client = get_openai_client()
@@ -351,23 +357,13 @@ def page_mia():
                 try:
                     query = f"New regulations and guidelines for {topic} in {', '.join(selected_markets)} released 2024 2025"
                     raw_data, error = run_deep_search(query, days=365)
-                    
-                    if not raw_data:
-                        st.error(f"Search failed: {error}")
+                    if not raw_data: st.error(f"Search failed: {error}")
                     else:
                         prompt = create_mia_prompt(topic, selected_markets, raw_data)
-                        res = client.chat.completions.create(
-                            model=config.OPENAI_MODEL,
-                            messages=[{"role": "user", "content": prompt}],
-                            temperature=0.1,
-                            response_format={"type": "json_object"}
-                        )
-                        result_json = json.loads(res.choices[0].message.content)
-                        st.session_state["last_mia_results"] = result_json
-                        
-                        log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | Items: {len(result_json.get('items', []))}")
+                        res = client.chat.completions.create(model=config.OPENAI_MODEL, messages=[{"role": "user", "content": prompt}], temperature=0.1, response_format={"type": "json_object"})
+                        st.session_state["last_mia_results"] = json.loads(res.choices[0].message.content)
+                        log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | Items: {len(st.session_state['last_mia_results'].get('items', []))}")
                         st.rerun()
-                        
                 except Exception as e: st.error(f"Error: {e}")
 
     results = st.session_state.get("last_mia_results")
@@ -375,17 +371,13 @@ def page_mia():
         st.markdown("### 📋 Monitoring Report")
         st.info(f"**Executive Summary:** {results.get('executive_summary', 'No summary.')}")
         st.markdown("---")
-        
         items = results.get("items", [])
-        if not items:
-            st.warning("No significant updates found.")
-        
+        if not items: st.warning("No significant updates found.")
         for item in items:
             impact = item.get('impact', 'Low').lower()
             if impact == 'high': icon = "🔴"
             elif impact == 'medium': icon = "🟡"
             else: icon = "🟢"
-            
             with st.container():
                 c1, c2 = st.columns([0.1, 0.9])
                 with c1: st.markdown(f"## {icon}")
@@ -393,10 +385,8 @@ def page_mia():
                     st.markdown(f"**[{item['title']}]({item['url']})**")
                     st.caption(f"📅 {item['date']} | 🏛️ {item['source_name']}")
                     st.write(item['summary'])
-                    tags_html = ""
-                    for tag in item.get('tags', []):
-                        tags_html += f"<span style='background-color:#eee; padding:2px 8px; border-radius:10px; font-size:0.8em; margin-right:5px; color:#333'>{tag}</span>"
-                    st.markdown(tags_html, unsafe_allow_html=True)
+                    tags = "".join([f"<span style='background-color:#eee; padding:2px 8px; border-radius:10px; font-size:0.8em; margin-right:5px; color:#333'>{tag}</span>" for tag in item.get('tags', [])])
+                    st.markdown(tags, unsafe_allow_html=True)
                 st.markdown("---")
 
 def page_olivia():
@@ -488,7 +478,7 @@ def render_sidebar():
         else: 
             if st.session_state["dark_mode"]: st.session_state["dark_mode"]=False; st.rerun()
         st.markdown("---")
-        if st.button("Logout"): logout(); st.rerun()
+        if st.button("Log Out"): logout(); st.rerun()
 
 def render_login():
     c1, c2, c3 = st.columns([1, 1.5, 1])
@@ -497,9 +487,6 @@ def render_login():
         st.markdown(get_logo_html(), unsafe_allow_html=True)
         st.title(config.APP_NAME)
         st.text_input("Token", type="password", key="password_input", on_change=check_password)
-
-def apply_theme_css():
-    apply_theme()
 
 def main():
     apply_theme()
