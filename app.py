@@ -101,13 +101,19 @@ st.markdown(get_theme_css(), unsafe_allow_html=True)
 # --- 4. BACKEND HELPERS ---
 def check_password():
     correct_token = st.secrets.get("APP_TOKEN")
-    if not correct_token: st.session_state["authenticated"] = True; return
+    if not correct_token: 
+        st.session_state["authenticated"] = True
+        return
+    
     if st.session_state["password_input"] == correct_token:
-        st.session_state["authenticated"] = True; del st.session_state["password_input"]
-    else: st.error("Access Denied.")
+        st.session_state["authenticated"] = True
+        del st.session_state["password_input"]
+    else: 
+        st.error("Access Denied.")
 
 def logout():
-    st.session_state["authenticated"] = False; st.session_state["current_page"] = "Dashboard"
+    st.session_state["authenticated"] = False
+    st.session_state["current_page"] = "Dashboard"
 
 def get_api_key():
     return st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -156,21 +162,34 @@ def main_app():
         
         st.markdown("---")
         pages_list = ["Dashboard", "OlivIA", "EVA"]
-        if st.session_state["current_page"] not in pages_list: st.session_state["current_page"] = "Dashboard"
+        if st.session_state["current_page"] not in pages_list: 
+            st.session_state["current_page"] = "Dashboard"
+            
         selected_page = st.radio("NAVIGATION", pages_list, index=pages_list.index(st.session_state["current_page"]), label_visibility="collapsed")
-        if selected_page != st.session_state["current_page"]: navigate_to(selected_page)
+        
+        if selected_page != st.session_state["current_page"]: 
+            navigate_to(selected_page)
 
         st.markdown("---")
         col_dark, col_lbl = st.columns([1, 4])
-        with col_dark: is_dark = st.checkbox("", value=st.session_state["dark_mode"])
-        with col_lbl: st.write("Night Mode")
-        if is_dark != st.session_state["dark_mode"]: st.session_state["dark_mode"] = is_dark; st.rerun()
+        with col_dark: 
+            is_dark = st.checkbox("", value=st.session_state["dark_mode"])
+        with col_lbl: 
+            st.write("Night Mode")
+            
+        if is_dark != st.session_state["dark_mode"]: 
+            st.session_state["dark_mode"] = is_dark
+            st.rerun()
 
         st.markdown("---")
-        if st.button("Log Out"): logout(); st.rerun()
+        if st.button("Log Out"): 
+            logout()
+            st.rerun()
 
-    api_key = get_api_key(); client = OpenAI(api_key=api_key) if api_key else None
+    api_key = get_api_key()
+    client = OpenAI(api_key=api_key) if api_key else None
 
+    # --- DASHBOARD PAGE ---
     if st.session_state["current_page"] == "Dashboard":
         st.markdown("# Dashboard")
         st.markdown(f"<span class='sub-text'>Simplify today, amplify tomorrow.</span>", unsafe_allow_html=True)
@@ -178,50 +197,74 @@ def main_app():
         col1, col2 = st.columns(2)
         with col1:
             st.markdown("""<div class="info-card"><h3>🤖 OlivIA</h3><p class='sub-text'>Define product DNA & map regulatory landscape.</p></div>""", unsafe_allow_html=True)
-            st.write(""); if st.button("Launch OlivIA Analysis ->"): navigate_to("OlivIA")
+            st.write("")
+            if st.button("Launch OlivIA Analysis ->"): 
+                navigate_to("OlivIA")
         with col2:
             st.markdown("""<div class="info-card"><h3>🔍 EVA</h3><p class='sub-text'>Audit technical documentation against requirements.</p></div>""", unsafe_allow_html=True)
-            st.write(""); if st.button("Launch EVA Audit ->"): navigate_to("EVA")
+            st.write("")
+            if st.button("Launch EVA Audit ->"): 
+                navigate_to("EVA")
 
+    # --- OLIVIA PAGE ---
     elif st.session_state["current_page"] == "OlivIA":
         st.title("OlivIA Workspace")
         st.markdown("<span class='sub-text'>Define product parameters to generate requirements.</span>", unsafe_allow_html=True)
         st.markdown("---")
         col1, col2 = st.columns([2, 1])
-        with col1: desc = st.text_area("Product Definition", height=200, placeholder="Ex: Medical device class IIa...")
+        with col1: 
+            desc = st.text_area("Product Definition", height=200, placeholder="Ex: Medical device class IIa...")
         with col2:
             countries = st.multiselect("Markets", ["EU (CE)", "USA (FDA)", "China", "UK"], default=["EU (CE)"])
             output_lang = st.selectbox("Output Language", ["English", "French", "German"])
-            st.write(""); if st.button("Generate Report"):
+            
+            st.write("")
+            if st.button("Generate Report"):
                 if client and desc:
                     with st.spinner("Analyzing..."):
                         try:
                             response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt_olivia(desc, countries, output_lang)}], temperature=0.1)
-                            st.session_state["last_olivia_report"] = response.choices[0].message.content; st.rerun()
-                        except Exception as e: st.error(f"Error: {e}")
-        if "last_olivia_report" in st.session_state: st.markdown("---"); st.success("Analysis Generated"); st.markdown(st.session_state["last_olivia_report"])
+                            st.session_state["last_olivia_report"] = response.choices[0].message.content
+                            st.rerun()
+                        except Exception as e: 
+                            st.error(f"Error: {e}")
+                            
+        if "last_olivia_report" in st.session_state: 
+            st.markdown("---")
+            st.success("Analysis Generated")
+            st.markdown(st.session_state["last_olivia_report"])
 
+    # --- EVA PAGE ---
     elif st.session_state["current_page"] == "EVA":
         st.title("EVA Workspace")
         st.markdown("<span class='sub-text'>Verify documentation compliance.</span>", unsafe_allow_html=True)
         st.markdown("---")
+        
         default_ctx = st.session_state.get("last_olivia_report", "")
-        with st.expander("Regulatory Context", expanded=not bool(default_ctx)): context = st.text_area("Requirements", value=default_ctx, height=150)
+        with st.expander("Regulatory Context", expanded=not bool(default_ctx)): 
+            context = st.text_area("Requirements", value=default_ctx, height=150)
+            
         col1, col2 = st.columns([2,1])
-        with col1: uploaded = st.file_uploader("Technical File (PDF)", type="pdf")
+        with col1: 
+            uploaded = st.file_uploader("Technical File (PDF)", type="pdf")
         with col2:
             lang = st.selectbox("Audit Language", ["English", "French"])
-            st.write(""); if st.button("Run Audit"):
+            
+            st.write("")
+            if st.button("Run Audit"):
                 if client and uploaded:
                     with st.spinner("Auditing..."):
                         txt = extract_text_from_pdf(uploaded.read())
                         try:
                             res = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt_eva(context, txt, lang)}], temperature=0.1)
-                            st.markdown("### Audit Results"); st.markdown(res.choices[0].message.content)
-                        except Exception as e: st.error(f"Error: {e}")
+                            st.markdown("### Audit Results")
+                            st.markdown(res.choices[0].message.content)
+                        except Exception as e: 
+                            st.error(f"Error: {e}")
 
 def main():
-    if st.session_state["authenticated"]: main_app()
+    if st.session_state["authenticated"]: 
+        main_app()
     else:
         col1, col2, col3 = st.columns([1, 1.5, 1])
         with col2:
@@ -230,4 +273,5 @@ def main():
             st.markdown("<h1 style='text-align: center; color: #295A63;'>VALHALLAI</h1>", unsafe_allow_html=True)
             st.text_input("Security Token", type="password", key="password_input", on_change=check_password)
 
-if __name__ == "__main__": main()
+if __name__ == "__main__": 
+    main()
