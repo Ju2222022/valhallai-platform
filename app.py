@@ -31,7 +31,6 @@ if "mia" not in config.AGENTS:
         "description": "Market Intelligence Agent (Regulatory Watch & Monitoring)."
     }
 
-# LISTE DE SECOURS (FALLBACK)
 DEFAULT_DOMAINS = [
     # EUROPE
     "eur-lex.europa.eu", "europa.eu", "echa.europa.eu", "cenelec.eu", 
@@ -411,14 +410,19 @@ def page_mia():
         st.markdown("### 📋 Monitoring Report")
         st.info(f"**Executive Summary:** {results.get('executive_summary', 'No summary.')}")
         
-        # --- FILTRES AVANCÉS AVEC NOUVELLE CATÉGORIE ---
+        # --- FILTRES RÉORGANISÉS ---
         c_filter1, c_filter2, c_legend = st.columns([1, 1, 1.5])
+        
+        # COLONNE 1 : TYPE (Le "Quoi") - Prioritaire
         with c_filter1:
-            selected_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"])
-        with c_filter2:
-            # 5 Catégories
             all_categories = ["Regulation", "Standard", "Guidance", "Enforcement", "News"]
             selected_types = st.multiselect("🗂️ Filter by Type", all_categories, default=all_categories)
+            
+        # COLONNE 2 : IMPACT (Le "Combien")
+        with c_filter2:
+            selected_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"])
+            
+        # COLONNE 3 : LÉGENDE
         with c_legend:
             st.caption("ℹ️ Legend:")
             st.markdown("🔴 High | 🟡 Medium | 🟢 Low")
@@ -426,8 +430,6 @@ def page_mia():
         st.markdown("---")
         
         items = results.get("items", [])
-        
-        # LOGIQUE DE FILTRAGE
         filtered_items = [
             i for i in items 
             if i.get('impact', 'Low').capitalize() in selected_impacts
@@ -440,17 +442,16 @@ def page_mia():
             impact = item.get('impact', 'Low').lower()
             category = item.get('category', 'News')
             
-            # Icone Impact
             if impact == 'high': icon = "🔴"
             elif impact == 'medium': icon = "🟡"
             else: icon = "🟢"
             
-            # Badge Catégorie (Emoji Mapping)
+            # Badge Catégorie
             cat_map = {
-                "Regulation": "📜", 
+                "Regulation": "🏛️", 
                 "Standard": "📏", 
                 "Guidance": "📘", 
-                "Enforcement": "📢", # Nouveau
+                "Enforcement": "📢", 
                 "News": "📰"
             }
             cat_icon = cat_map.get(category, "📄")
