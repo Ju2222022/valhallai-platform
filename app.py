@@ -88,11 +88,7 @@ def get_markets_sheet():
     return wb.sheet1 if wb else None
 
 def log_usage(report_type, report_id, details="", extra_metrics=""):
-    """
-    Enregistre l'activité dans l'onglet 'Logs'.
-    - details (Col E) : Description produit ou nom fichier
-    - extra_metrics (Col F) : Nombre de marchés, etc.
-    """
+    """Enregistre l'activité dans l'onglet 'Logs'."""
     wb = get_gsheet_workbook()
     if not wb: return
 
@@ -100,7 +96,6 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
         try:
             log_sheet = wb.worksheet("Logs")
         except:
-            # Création si inexistant (6 colonnes maintenant)
             log_sheet = wb.add_worksheet(title="Logs", rows=1000, cols=6)
             log_sheet.append_row(["Date", "Time", "Report ID", "Type", "Details", "Metrics"])
 
@@ -110,8 +105,8 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
             now.strftime("%H:%M:%S"),
             report_id,
             report_type,
-            details,        # Colonne E
-            extra_metrics   # Colonne F
+            details,
+            extra_metrics
         ]
         log_sheet.append_row(row)
         
@@ -218,7 +213,7 @@ def logout():
     st.session_state["current_page"] = "Dashboard"
 
 # =============================================================================
-# 6. PROMPTS IA (EXPERT LEVEL)
+# 6. PROMPTS IA (EXPERT LEVEL) & UI HELPERS
 # =============================================================================
 def create_olivia_prompt(description, countries):
     markets_str = ", ".join(countries)
@@ -260,6 +255,7 @@ def create_olivia_prompt(description, countries):
     
     CONSTRAINTS:
     - Language: STRICTLY ENGLISH.
+    - Translate all headers/titles to English.
     - Tone: Professional, authoritative, and precise.
     - No filler text, focus on actionable data.
     """
@@ -299,9 +295,45 @@ def create_eva_prompt(context, doc_text):
     
     CONSTRAINTS:
     - Language: STRICTLY ENGLISH.
+    - Translate all headers/titles to English.
     - Be strict: If evidence is vague, mark it as ⚠️.
     - Reference specific parts of the text when possible.
     """
+
+# --- FONCTIONS VISUELLES RESTAURÉES ---
+def get_logo_svg():
+    colors = config.COLORS["dark" if st.session_state["dark_mode"] else "light"]
+    c1, c2 = colors["primary"], colors["accent"]
+    c3, c4 = "#1A3C42", "#E6D5A7"
+    return f"""
+    <svg width="60" height="60" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="10" y="10" width="38" height="38" rx="8" fill="{c1}"/>
+        <rect x="52" y="10" width="38" height="38" rx="8" fill="{c2}"/>
+        <rect x="10" y="52" width="38" height="38" rx="8" fill="{c3}"/>
+        <rect x="52" y="52" width="38" height="38" rx="8" fill="{c4}"/>
+    </svg>
+    """
+
+def get_logo_html():
+    svg = get_logo_svg()
+    b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
+    return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 15px;">'
+
+def apply_theme():
+    mode = "dark" if st.session_state["dark_mode"] else "light"
+    c = config.COLORS[mode]
+    st.markdown(f"""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
+    .stApp {{ background-color: {c['background']}; font-family: 'Inter', sans-serif; color: {c['text']}; }}
+    h1, h2, h3 {{ font-family: 'Montserrat', sans-serif !important; color: {c['primary']} !important; }}
+    .info-card {{ background-color: {c['card']}; padding: 2rem; border-radius: 12px; border: 1px solid {c['border']}; }}
+    .logo-text {{ font-family: 'Montserrat', sans-serif; font-weight: 700; font-size: 1.4rem; color: {c['text']}; }}
+    .logo-sub {{ font-size: 0.7rem; letter-spacing: 2px; text-transform: uppercase; color: {c['text_secondary']}; font-weight: 500; }}
+    div.stButton > button:first-child {{ background-color: {c['primary']} !important; color: {c['button_text']} !important; border-radius: 8px; font-weight: 600; width: 100%;}}
+    </style>
+    """, unsafe_allow_html=True)
+
 # =============================================================================
 # 7. PAGES
 # =============================================================================
@@ -314,50 +346,34 @@ def page_admin():
         st.text_input("Admin Password", type="password", key="admin_pass_input", on_change=check_admin_password)
         return
     
-    # 1. Connection Status & Refresh
     wb = get_gsheet_workbook()
     col_status, col_refresh = st.columns([3, 1])
-    
     with col_status:
-        if wb:
-            st.success(f"✅ Database Connected: {wb.title}")
-        else:
-            st.error("❌ Connection Failed. Check Secrets.")
-            
+        if wb: st.success(f"✅ Database Connected: {wb.title}")
+        else: st.error("❌ Connection Failed.")
     with col_refresh:
         if st.button("🔄 Force Refresh"):
-            st.cache_data.clear()
-            st.rerun()
+            st.cache_data.clear(); st.rerun()
 
-    # 2. Get Data (Markets)
     current_markets, is_live = get_markets()
-    
-    if not is_live:
-        st.warning("🟠 Showing Default/Offline List (Connection Issue)")
-    else:
-        st.info("🟢 Source: Live Database")
+    if not is_live: st.warning("🟠 Default List (Offline)")
+    else: st.info("🟢 Source: Live Database")
 
-    # 3. Add Market Form
     st.markdown("#### Add New Market")
     with st.form("add_form", clear_on_submit=True):
         col1, col2 = st.columns([3, 1])
-        new = col1.text_input("Market Name", placeholder="e.g. Japan (PMDA)")
+        new = col1.text_input("Market Name")
         if col2.form_submit_button("Add"):
-            if new and add_market(new):
-                st.success(f"Added: {new}"); st.rerun()
-            else:
-                st.error("Error or Duplicate")
+            if new and add_market(new): st.success(f"Added: {new}"); st.rerun()
+            else: st.error("Error")
 
-    # 4. List Markets
     st.markdown("#### Active Markets")
     for i, m in enumerate(current_markets):
         c1, c2, c3 = st.columns([4, 1, 1])
         if st.session_state.get("editing_market_index") != i:
             c1.info(f"🌍 {m}")
-            if c2.button("✏️", key=f"ed_{i}"):
-                st.session_state["editing_market_index"] = i; st.rerun()
-            if c3.button("🗑️", key=f"del_{i}"):
-                remove_market(i); st.rerun()
+            if c2.button("✏️", key=f"ed_{i}"): st.session_state["editing_market_index"] = i; st.rerun()
+            if c3.button("🗑️", key=f"del_{i}"): remove_market(i); st.rerun()
         else:
             new_val = c1.text_input("Edit", value=m, key=f"val_{i}", label_visibility="collapsed")
             if c2.button("💾", key=f"save_{i}"):
@@ -383,7 +399,6 @@ def page_olivia():
             if client and desc:
                 with st.spinner("Analyzing..."):
                     try:
-                        # 1. Génération IA
                         res = client.chat.completions.create(
                             model=config.OPENAI_MODEL,
                             messages=[{"role": "user", "content": create_olivia_prompt(desc, countries)}],
@@ -391,13 +406,9 @@ def page_olivia():
                         )
                         st.session_state["last_olivia_report"] = res.choices[0].message.content
                         
-                        # 2. Création ID Unique & Logging (MODIFIÉ ICI)
                         new_id = str(uuid.uuid4())
                         st.session_state["last_olivia_id"] = new_id
-                        
-                        # LOG: Col E = Produit, Col F = Nombre de marchés
                         log_usage("OlivIA", new_id, desc, f"Mkts: {len(countries)}")
-                        
                         st.rerun()
                     except Exception as e: st.error(str(e))
     
@@ -407,7 +418,6 @@ def page_olivia():
         st.markdown(st.session_state["last_olivia_report"])
         
         st.markdown("---")
-        
         timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
         file_name = f"VALHALLAI_Report_{timestamp}.pdf"
         report_id = st.session_state.get("last_olivia_id", "Unknown-ID")
@@ -415,13 +425,7 @@ def page_olivia():
         col_space, col_btn = st.columns([4, 1])
         with col_btn:
             pdf_data = generate_pdf_report("Regulatory Analysis Report", st.session_state["last_olivia_report"], report_id)
-            st.download_button(
-                label="📥 Download PDF",
-                data=pdf_data,
-                file_name=file_name,
-                mime="application/pdf",
-                use_container_width=True
-            )
+            st.download_button("📥 Download PDF", pdf_data, file_name, "application/pdf", use_container_width=True)
 
 def page_dashboard():
     st.title("Dashboard")
@@ -448,68 +452,42 @@ def page_eva():
             with st.spinner("Auditing..."):
                 txt = extract_text_from_pdf(up.read())
                 try:
-                    # 1. IA
                     res = client.chat.completions.create(
                         model="gpt-4o", 
                         messages=[{"role":"user","content":create_eva_prompt(ctx,txt)}], 
                         temperature=config.OPENAI_TEMPERATURE
                     )
                     st.session_state["last_eva_report"] = res.choices[0].message.content
-                    
-                    # 2. ID & Log (MODIFIÉ ICI)
                     new_id = str(uuid.uuid4())
                     st.session_state["last_eva_id"] = new_id
-                    
-                    # LOG: Col E = Nom Fichier, Col F = N/A
                     log_usage("EVA", new_id, f"File: {up.name}", "N/A")
-                    
                 except Exception as e: st.error(str(e))
 
     if st.session_state.get("last_eva_report"):
         st.markdown("### Audit Results")
         st.markdown(st.session_state["last_eva_report"])
-        
         st.markdown("---")
-        
         timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
         file_name = f"VALHALLAI_Audit_{timestamp}.pdf"
         report_id = st.session_state.get("last_eva_id", "Unknown-ID")
-        
         col_space, col_btn = st.columns([4, 1])
         with col_btn:
             pdf_data = generate_pdf_report("Compliance Audit Report", st.session_state["last_eva_report"], report_id)
-            st.download_button(
-                label="📥 Download PDF",
-                data=pdf_data,
-                file_name=file_name,
-                mime="application/pdf",
-                use_container_width=True
-            )
+            st.download_button("📥 Download PDF", pdf_data, file_name, "application/pdf", use_container_width=True)
 
 def render_sidebar():
     with st.sidebar:
         logo_html = get_logo_html()
-        st.markdown(f"""
-        <div style="display: flex; align-items: center; margin-bottom: 1rem;">
-            {logo_html}
-            <div>
-                <div class="logo-text">{config.APP_NAME}</div>
-                <div class="logo-sub">{config.APP_TAGLINE}</div>
-            </div>
-        </div>
-        """, unsafe_allow_html=True)
-        
+        st.markdown(f"""<div style="display: flex; align-items: center; margin-bottom: 1rem;">{logo_html}<div><div class="logo-text">{config.APP_NAME}</div><div class="logo-sub">{config.APP_TAGLINE}</div></div></div>""", unsafe_allow_html=True)
         st.markdown("---")
         pages = ["Dashboard", "OlivIA", "EVA", "Admin"]
         current = st.session_state["current_page"]
         idx = pages.index(current) if current in pages else 0
         sel = st.radio("NAVIGATION", pages, index=idx)
         if sel != st.session_state["current_page"]: navigate_to(sel)
-        
         st.markdown("---")
         is_dark = st.checkbox("Night Mode", value=st.session_state["dark_mode"])
         if is_dark != st.session_state["dark_mode"]: st.session_state["dark_mode"] = is_dark; st.rerun()
-        
         st.markdown("---")
         if st.button("Log Out"): logout(); st.rerun()
 
