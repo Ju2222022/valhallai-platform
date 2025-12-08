@@ -5,71 +5,40 @@ import base64
 import uuid
 import json
 from datetime import datetime
+from openai import OpenAI
+from pypdf import PdfReader
+import gspread 
+from tavily import TavilyClient
 
-# Imports tiers (assure-toi d'avoir fait: pip install openai pypdf gspread tavily-python)
-try:
-    from openai import OpenAI
-    from pypdf import PdfReader
-    import gspread
-    from tavily import TavilyClient
-except ImportError as e:
-    st.error(f"Erreur d'import : {e}. Lancez 'pip install openai pypdf gspread tavily-python'")
-    st.stop()
+# Imports locaux
+import config
+from utils_pdf import generate_pdf_report
 
 # =============================================================================
-# 0. CONFIGURATION & MOCKS (Pour rendre le script autonome)
+# 0. CONFIGURATION
 # =============================================================================
-
-# Remplacement de l'import config externe
-class Config:
-    APP_NAME = "VALHALLAI"
-    APP_ICON = "🛡️"
-    APP_SLOGAN = "Regulatory Intelligence & Compliance Audit"
-    APP_TAGLINE = "AI-Powered Regulatory Affairs"
-    OPENAI_MODEL = "gpt-4o"
-    
-    AGENTS = {
-        "olivia": {
-            "name": "OlivIA",
-            "icon": "🤖",
-            "description": "Regulatory Strategy & Market Access."
-        },
-        "eva": {
-            "name": "EVA",
-            "icon": "🔍",
-            "description": "Compliance Audit & Gap Analysis."
-        },
-        "mia": {
-            "name": "MIA",
-            "icon": "📡",
-            "description": "Market Intelligence Agent (Regulatory Watch)."
-        }
-    }
-    
-    DEFAULT_MARKETS = ["EU (MDR)", "USA (FDA)", "UK (MHRA)", "Canada (Health Canada)"]
-
-# Remplacement de l'import utils_pdf
-def generate_pdf_report(title, content, report_id):
-    # Simulation de génération PDF pour éviter l'erreur d'import
-    # En prod, utiliser fpdf ou reportlab ici
-    return f"PDF Simulation for ID {report_id}\n\n{title}\n\n{content}".encode('utf-8')
-
-# Configuration de la page (DOIT ÊTRE LA PREMIÈRE COMMANDE STREAMLIT)
 st.set_page_config(
-    page_title=Config.APP_NAME,
-    page_icon=Config.APP_ICON,
+    page_title=config.APP_NAME,
+    page_icon=config.APP_ICON,
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-# LISTE DE SECOURS (FALLBACK)
+# Configuration MIA
+if "mia" not in config.AGENTS:
+    config.AGENTS["mia"] = {
+        "name": "MIA",
+        "icon": "📡",
+        "description": "Market Intelligence Agent (Regulatory Watch & Monitoring)."
+    }
+
 DEFAULT_DOMAINS = [
-    "eur-lex.europa.eu", "europa.eu", "echa.europa.eu", "cenelec.eu", 
-    "fda.gov", "iso.org", "iec.ch", "gov.uk", "reuters.com"
+    "eur-lex.europa.eu", "europa.eu", "fda.gov", "iso.org", "gov.uk", 
+    "reuters.com", "raps.org", "medtechdive.com"
 ]
 
 # =============================================================================
-# 1. INITIALISATION DU SESSION STATE
+# 1. SESSION STATE
 # =============================================================================
 def init_session_state():
     defaults = {
@@ -81,6 +50,8 @@ def init_session_state():
         "last_eva_report": None,
         "last_eva_id": None,
         "last_mia_results": None,
+        "editing_market_index": None,
+        "editing_domain_index": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -89,37 +60,31 @@ def init_session_state():
 init_session_state()
 
 # =============================================================================
-# 2. GESTION DES DONNÉES (GOOGLE SHEETS - SÉCURISÉE)
+# 2. DONNÉES (GOOGLE SHEETS)
 # =============================================================================
 @st.cache_resource
 def get_gsheet_workbook():
-    # Vérification sécurisée des secrets
-    if "service_account" not in st.secrets or "gsheets" not in st.secrets:
-        return None
-    
     try:
+        if "service_account" not in st.secrets: return None
         sa_secrets = st.secrets["service_account"]
         raw_key = sa_secrets.get("private_key", "")
-        # Nettoyage de la clé privée
         clean_key = raw_key.replace("\\n", "\n")
+        if "-----BEGIN PRIVATE KEY-----" not in clean_key:
+            clean_key = "-----BEGIN PRIVATE KEY-----\n" + clean_key.strip()
+        if "-----END PRIVATE KEY-----" not in clean_key:
+            clean_key = clean_key.strip() + "\n-----END PRIVATE KEY-----"
         
         creds_dict = {
-            "type": sa_secrets["type"], 
-            "project_id": sa_secrets["project_id"],
-            "private_key_id": sa_secrets["private_key_id"], 
-            "private_key": clean_key,
-            "client_email": sa_secrets["client_email"], 
-            "client_id": sa_secrets["client_id"],
-            "auth_uri": sa_secrets["auth_uri"], 
-            "token_uri": sa_secrets["token_uri"],
+            "type": sa_secrets["type"], "project_id": sa_secrets["project_id"],
+            "private_key_id": sa_secrets["private_key_id"], "private_key": clean_key,
+            "client_email": sa_secrets["client_email"], "client_id": sa_secrets["client_id"],
+            "auth_uri": sa_secrets["auth_uri"], "token_uri": sa_secrets["token_uri"],
             "auth_provider_x509_cert_url": sa_secrets["auth_provider_x509_cert_url"],
             "client_x509_cert_url": sa_secrets["client_x509_cert_url"]
         }
         gc = gspread.service_account_from_dict(creds_dict)
         return gc.open_by_url(st.secrets["gsheets"]["url"])
-    except Exception as e:
-        print(f"GSheet Error: {e}")
-        return None
+    except: return None
 
 def log_usage(report_type, report_id, details="", extra_metrics=""):
     wb = get_gsheet_workbook()
@@ -127,25 +92,19 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
     try:
         try: log_sheet = wb.worksheet("Logs")
         except: log_sheet = wb.add_worksheet(title="Logs", rows=1000, cols=6)
-        
+        if not log_sheet.cell(1, 1).value:
+            log_sheet.update("A1:F1", [["Date", "Time", "Report ID", "Type", "Details", "Metrics"]])
         now = datetime.now()
-        log_sheet.append_row([
-            now.strftime("%Y-%m-%d"), 
-            now.strftime("%H:%M:%S"), 
-            report_id, 
-            report_type, 
-            details, 
-            extra_metrics
-        ])
+        log_sheet.append_row([now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), report_id, report_type, details, extra_metrics])
     except: pass
 
-# --- HELPERS BDD ---
+# --- HELPERS ---
 def get_markets():
     wb = get_gsheet_workbook()
     if wb:
         try: return (wb.sheet1.col_values(1) if wb.sheet1.col_values(1) else []), True
         except: pass
-    return Config.DEFAULT_MARKETS, False
+    return config.DEFAULT_MARKETS, False
 
 def add_market(name):
     wb = get_gsheet_workbook()
@@ -159,6 +118,12 @@ def remove_market(idx):
     wb = get_gsheet_workbook()
     if wb:
         try: wb.sheet1.delete_rows(idx + 1); st.cache_data.clear()
+        except: pass
+
+def update_market(idx, name):
+    wb = get_gsheet_workbook()
+    if wb:
+        try: wb.sheet1.update_cell(idx + 1, 1, name); st.cache_data.clear()
         except: pass
 
 def get_domains():
@@ -188,9 +153,18 @@ def remove_domain(idx):
         try: wb.worksheet("Watch_domains").delete_rows(idx + 1); st.cache_data.clear()
         except: pass
 
+def update_domain(idx, name):
+    wb = get_gsheet_workbook()
+    if wb:
+        try: wb.worksheet("Watch_domains").update_cell(idx + 1, 1, name); st.cache_data.clear()
+        except: pass
+
 # =============================================================================
-# 4. API & SEARCH & CACHING
+# 4. API
 # =============================================================================
+def get_api_key():
+    return st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
+
 def get_openai_client():
     k = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
     return OpenAI(api_key=k) if k else None
@@ -199,14 +173,14 @@ def get_openai_client():
 def cached_run_deep_search(query, days=None):
     try:
         k = st.secrets.get("TAVILY_API_KEY")
-        if not k: return None, "Tavily API Key Missing"
+        if not k: return None, "Key Missing"
         tavily = TavilyClient(api_key=k)
         doms, _ = get_domains()
         params = {"query": query, "search_depth": "advanced", "max_results": 5 if days else 3, "include_domains": doms}
         if days: params["days"] = days
         response = tavily.search(**params)
         txt = "### WEB RESULTS:\n"
-        for r in response.get('results', []):
+        for r in response['results']:
             txt += f"- Title: {r['title']}\n  URL: {r['url']}\n  Content: {r['content'][:800]}...\n\n"
         return txt, None
     except Exception as e: return None, str(e)
@@ -214,14 +188,11 @@ def cached_run_deep_search(query, days=None):
 @st.cache_data(show_spinner=False)
 def cached_ai_generation(prompt, model, temp, json_mode=False):
     client = get_openai_client()
-    if not client: return "Error: OpenAI API Key missing."
-    try:
-        kwargs = {"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": temp}
-        if json_mode: kwargs["response_format"] = {"type": "json_object"}
-        res = client.chat.completions.create(**kwargs)
-        return res.choices[0].message.content
-    except Exception as e:
-        return f"OpenAI Error: {str(e)}"
+    if not client: return None
+    kwargs = {"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": temp}
+    if json_mode: kwargs["response_format"] = {"type": "json_object"}
+    res = client.chat.completions.create(**kwargs)
+    return res.choices[0].message.content
 
 def extract_text_from_pdf(b):
     try:
@@ -231,24 +202,17 @@ def extract_text_from_pdf(b):
     except Exception as e: return str(e)
 
 # =============================================================================
-# 5. AUTH & PROMPTS
+# 5. LOGIQUE MÉTIER & PROMPTS
 # =============================================================================
 def check_password():
-    # Si pas de token défini dans secrets, on laisse passer
-    if not st.secrets.get("APP_TOKEN"): 
-        st.session_state["authenticated"]=True
-        return
-        
+    if not st.secrets.get("APP_TOKEN"): st.session_state["authenticated"]=True; return
     if st.session_state.get("password_input")==st.secrets["APP_TOKEN"]:
-        st.session_state["authenticated"]=True
-        # On ne supprime pas le widget key immédiatement pour éviter erreur Streamlit
-        st.session_state["password_input"] = "" 
-    else: 
-        st.error("Access Denied")
+        st.session_state["authenticated"]=True; del st.session_state["password_input"]
+    else: st.error("Access Denied")
 
 def check_admin_password():
-    if st.session_state.get("admin_pass_input")==st.secrets.get("ADMIN_TOKEN", "admin"):
-        st.session_state["admin_authenticated"]=True
+    if st.session_state.get("admin_pass_input")==st.secrets.get("ADMIN_TOKEN"):
+        st.session_state["admin_authenticated"]=True; del st.session_state["admin_pass_input"]
     else: st.error("Denied")
 
 def logout():
@@ -277,7 +241,7 @@ def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     {{
         "executive_summary": "Summary...",
         "items": [
-            {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["..."], "impact": "High/Medium/Low", "category": "Regulation" }}
+            {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["Tag1"], "impact": "High/Medium/Low", "category": "Regulation" }}
         ]
     }}
     """
@@ -292,24 +256,8 @@ def get_logo_html():
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
     return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 15px;">'
 
-# --- THEME ---
-def apply_theme():
-    st.markdown("""
-    <style>
-    .info-card { 
-        padding: 2rem; border-radius: 12px; border: 1px solid #E2E8F0; 
-        min-height: 220px; display: flex; flex-direction: column; justify-content: flex-start;
-    }
-    div.stButton > button:first-child { 
-        background-color: #295A63 !important; color: white !important; 
-        border-radius: 8px; font-weight: 600; width: 100%; border: none;
-    }
-    div.stButton > button:first-child:hover { filter: brightness(1.1); }
-    </style>
-    """, unsafe_allow_html=True)
-
 # =============================================================================
-# 7. PAGES UI
+# 6. PAGES
 # =============================================================================
 def page_admin():
     st.title("⚙️ Admin Console"); st.markdown("---")
@@ -318,11 +266,7 @@ def page_admin():
     
     wb = get_gsheet_workbook()
     c1, c2 = st.columns([3, 1])
-    if wb:
-        c1.success(f"✅ DB Connected: {wb.title}")
-    else:
-        c1.warning("⚠️ DB Disconnected (Check Secrets)")
-        
+    c1.success(f"✅ DB: {wb.title}" if wb else "❌ DB Error")
     if c2.button("🔄 Refresh"): st.cache_data.clear(); st.rerun()
 
     tm, td = st.tabs(["🌍 Markets", "🕵️‍♂️ Sources"])
@@ -366,13 +310,12 @@ def page_mia():
                 if not raw_data: st.error(f"Search failed: {error}")
                 else:
                     prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
-                    json_str = cached_ai_generation(prompt, Config.OPENAI_MODEL, 0.1, json_mode=True)
-                    if json_str and "Error" not in json_str:
-                        try:
-                            st.session_state["last_mia_results"] = json.loads(json_str)
-                            log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
-                            st.rerun()
-                        except: st.error("Failed to parse JSON")
+                    json_str = cached_ai_generation(prompt, config.OPENAI_MODEL, 0.1, json_mode=True)
+                    if json_str:
+                        st.session_state["last_mia_results"] = json.loads(json_str)
+                        log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
+                        st.toast("Monitoring Complete!", icon="🎉")
+                        st.rerun()
                     else: st.error("Analysis failed.")
 
     results = st.session_state.get("last_mia_results")
@@ -386,6 +329,9 @@ def page_mia():
             sel_types = st.multiselect("🗂️ Filter by Type", all_cat, default=all_cat)
         with c_filter2:
             sel_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"])
+        with c_legend:
+            st.caption("ℹ️ Legend:")
+            st.markdown("🔴 High | 🟡 Medium | 🟢 Low")
         
         st.markdown("---")
         items = results.get("items", [])
@@ -428,12 +374,11 @@ def page_olivia():
                 p = create_olivia_prompt(desc, ctrys)
                 if ctx: p += f"\n\nCONTEXT:\n{ctx}"
                 
-                resp = cached_ai_generation(p, Config.OPENAI_MODEL, 0.1)
+                resp = cached_ai_generation(p, config.OPENAI_MODEL, 0.1)
                 st.session_state["last_olivia_report"] = resp
-                
-                new_id = str(uuid.uuid4())
-                st.session_state["last_olivia_id"] = new_id
+                st.session_state["last_olivia_id"] = str(uuid.uuid4())
                 log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)}")
+                st.toast("Analysis Ready!", icon="✅")
                 st.rerun()
             except Exception as e: st.error(str(e))
 
@@ -442,9 +387,11 @@ def page_olivia():
         st.success("✅ Analysis Generated")
         st.markdown(st.session_state["last_olivia_report"])
         st.markdown("---")
-        
-        pdf = generate_pdf_report("Regulatory Analysis Report", st.session_state["last_olivia_report"], st.session_state.get("last_olivia_id", "ID"))
-        st.download_button("📥 Download PDF", pdf, f"VALHALLAI_Report.pdf", "application/pdf")
+        try:
+            pdf = generate_pdf_report("Regulatory Analysis Report", st.session_state["last_olivia_report"], st.session_state.get("last_olivia_id", "ID"))
+            st.download_button("📥 Download PDF", pdf, f"VALHALLAI_Report.pdf", "application/pdf")
+        except:
+            st.download_button("📥 Download Raw Text", st.session_state["last_olivia_report"], "report.md")
 
 def page_eva():
     st.title("🔍 EVA Workspace")
@@ -458,92 +405,72 @@ def page_eva():
                 st.session_state["last_eva_report"] = resp
                 st.session_state["last_eva_id"] = str(uuid.uuid4())
                 log_usage("EVA", st.session_state["last_eva_id"], f"File: {up.name}")
-                st.rerun()
+                st.toast("Audit Complete!", icon="🔍")
             except Exception as e: st.error(str(e))
     
     if st.session_state.get("last_eva_report"):
         st.markdown("### Audit Results")
         st.markdown(st.session_state["last_eva_report"])
         st.markdown("---")
-        
-        pdf = generate_pdf_report("Compliance Audit Report", st.session_state["last_eva_report"], st.session_state.get("last_eva_id", "ID"))
-        st.download_button("📥 Download PDF", pdf, f"VALHALLAI_Audit.pdf", "application/pdf")
+        try:
+            pdf = generate_pdf_report("Compliance Audit Report", st.session_state["last_eva_report"], st.session_state.get("last_eva_id", "ID"))
+            st.download_button("📥 Download PDF", pdf, f"VALHALLAI_Audit.pdf", "application/pdf")
+        except:
+            st.download_button("📥 Download Text", st.session_state["last_eva_report"], "audit.md")
 
 def page_dashboard():
     st.title("Dashboard")
-    st.markdown(f"<span class='sub-text'>{Config.APP_SLOGAN}</span>", unsafe_allow_html=True)
+    st.markdown(f"<span class='sub-text'>{config.APP_SLOGAN}</span>", unsafe_allow_html=True)
     st.markdown("###")
     c1, c2, c3 = st.columns(3)
     
     with c1: 
-        st.markdown(f"""<div class="info-card"><h3>🤖 OlivIA</h3><p class='sub-text'>{Config.AGENTS['olivia']['description']}</p></div>""", unsafe_allow_html=True)
-        st.write("")
+        st.info(f"**🤖 OlivIA**\n\n{config.AGENTS['olivia']['description']}")
         if st.button("Launch OlivIA ->"): 
             st.session_state["current_page"] = "OlivIA"
             st.rerun()
     with c2: 
-        st.markdown(f"""<div class="info-card"><h3>🔍 EVA</h3><p class='sub-text'>{Config.AGENTS['eva']['description']}</p></div>""", unsafe_allow_html=True)
-        st.write("")
+        st.info(f"**🔍 EVA**\n\n{config.AGENTS['eva']['description']}")
         if st.button("Launch EVA ->"): 
             st.session_state["current_page"] = "EVA"
             st.rerun()
     with c3: 
-        st.markdown(f"""<div class="info-card"><h3>{Config.AGENTS['mia']['icon']} {Config.AGENTS['mia']['name']}</h3><p class='sub-text'>{Config.AGENTS['mia']['description']}</p></div>""", unsafe_allow_html=True)
-        st.write("")
+        st.info(f"**📡 MIA**\n\n{config.AGENTS['mia']['description']}")
         if st.button("Launch MIA ->"): 
             st.session_state["current_page"] = "MIA"
             st.rerun()
 
-# =============================================================================
-# FONCTIONS DE NAVIGATION ET MAIN
-# =============================================================================
-def on_nav_change():
-    """Callback pour gérer le changement de page sans boucle infinie."""
-    st.session_state["current_page"] = st.session_state["nav_radio"]
-
 def render_sidebar():
     with st.sidebar:
-        if st.button("🏠 Home", use_container_width=True):
-             st.session_state["current_page"] = "Dashboard"
-             st.rerun()
-
         st.markdown(get_logo_html(), unsafe_allow_html=True)
-        st.markdown(f"<div class='logo-text'>{Config.APP_NAME}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='font-weight:bold; font-size:1.2em;'>{config.APP_NAME}</div>", unsafe_allow_html=True)
         st.markdown("---")
         
+        # Navigation simple et robuste
         pages = ["Dashboard", "OlivIA", "EVA", "MIA", "Admin"]
-        curr = st.session_state["current_page"]
         
-        # Calcul sécurisé de l'index
-        try:
-            idx = pages.index(curr)
-        except ValueError:
-            idx = 0
+        # On s'assure que current_page est valide
+        if st.session_state["current_page"] not in pages:
+            st.session_state["current_page"] = "Dashboard"
             
-        # UTILISATION DU CALLBACK POUR ÉVITER LE ST.RERUN() MANUEL
-        st.radio(
-            "NAV", 
-            pages, 
-            index=idx, 
-            label_visibility="collapsed",
-            key="nav_radio",
-            on_change=on_nav_change
-        )
-
+        selection = st.radio("MENU", pages, index=pages.index(st.session_state["current_page"]))
+        
+        if selection != st.session_state["current_page"]:
+            st.session_state["current_page"] = selection
+            st.rerun()
+            
         st.markdown("---")
         if st.button("Log Out"): logout(); st.rerun()
 
 def render_login():
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
-        st.markdown("<br><br><br>", unsafe_allow_html=True)
-        st.markdown(f"<div style='text-align:center'>{get_logo_html()}</div>", unsafe_allow_html=True)
-        st.markdown(f"<h1 style='text-align: center; color: #295A63;'>{Config.APP_NAME}</h1>", unsafe_allow_html=True)
-        st.markdown(f"<p style='text-align: center; color: #666;'>{Config.APP_TAGLINE}</p>", unsafe_allow_html=True)
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        st.markdown(get_logo_html(), unsafe_allow_html=True)
+        st.title(config.APP_NAME)
         st.text_input("Token", type="password", key="password_input", on_change=check_password)
 
 def main():
-    apply_theme()
     if st.session_state["authenticated"]:
         render_sidebar()
         p = st.session_state["current_page"]
@@ -555,5 +482,4 @@ def main():
         else: page_dashboard()
     else: render_login()
 
-if __name__ == "__main__":
-    main()
+if __name__ == "__main__": main()
