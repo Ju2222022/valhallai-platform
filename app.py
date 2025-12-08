@@ -33,16 +33,11 @@ if "mia" not in config.AGENTS:
 
 # LISTE DE SECOURS (FALLBACK)
 DEFAULT_DOMAINS = [
-    # EUROPE
     "eur-lex.europa.eu", "europa.eu", "echa.europa.eu", "cenelec.eu", 
     "single-market-economy.ec.europa.eu",
-    # USA
     "fda.gov", "fcc.gov", "cpsc.gov", "osha.gov", "phmsa.dot.gov",
-    # INTERNATIONAL
     "iso.org", "iec.ch", "unece.org", "iata.org",
-    # UK & ASIE
     "gov.uk", "meti.go.jp", "kats.go.kr",
-    # NEWS & VEILLE
     "reuters.com", "raps.org", "medtechdive.com", "complianceandrisks.com"
 ]
 
@@ -54,7 +49,6 @@ def init_session_state():
         "authenticated": False,
         "admin_authenticated": False,
         "current_page": "Dashboard",
-        "dark_mode": True, # Préférence par défaut pour les composants custom
         "last_olivia_report": None,
         "last_olivia_id": None, 
         "last_eva_report": None,
@@ -70,14 +64,14 @@ def init_session_state():
 init_session_state()
 
 # =============================================================================
-# 2. GESTION DES DONNÉES (GOOGLE SHEETS)
+# 2. GESTION DES DONNÉES (GOOGLE SHEETS - SÉCURISÉE)
 # =============================================================================
 @st.cache_resource
 def get_gsheet_workbook():
     try:
         if "service_account" not in st.secrets: return None
         sa_secrets = st.secrets["service_account"]
-        # Réparation clé privée pour éviter les erreurs de format
+        # Réparation clé privée
         raw_key = sa_secrets.get("private_key", "")
         clean_key = raw_key.replace("\\n", "\n")
         if "-----BEGIN PRIVATE KEY-----" not in clean_key:
@@ -104,7 +98,7 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
         try: log_sheet = wb.worksheet("Logs")
         except: log_sheet = wb.add_worksheet(title="Logs", rows=1000, cols=6)
         
-        # Auto-réparation des en-têtes si la feuille est vide ou corrompue
+        # Réparation automatique des headers si la feuille est vide
         if not log_sheet.cell(1, 1).value:
             log_sheet.update("A1:F1", [["Date", "Time", "Report ID", "Type", "Details", "Metrics"]])
             
@@ -181,7 +175,7 @@ def update_domain(idx, name):
         except: pass
 
 # =============================================================================
-# 4. API & SEARCH & CACHING (Economie de Tokens)
+# 4. API & SEARCH & CACHING
 # =============================================================================
 def navigate_to(page):
     st.session_state["current_page"] = page
@@ -194,22 +188,15 @@ def get_openai_client():
     k = st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
     return OpenAI(api_key=k) if k else None
 
-@st.cache_data(show_spinner=False, ttl=3600) # Cache de 1h pour les recherches identiques
+@st.cache_data(show_spinner=False, ttl=3600)
 def cached_run_deep_search(query, days=None):
     try:
         k = st.secrets.get("TAVILY_API_KEY")
         if not k: return None, "Key Missing"
         tavily = TavilyClient(api_key=k)
         doms, _ = get_domains()
-        
-        params = {
-            "query": query, 
-            "search_depth": "advanced", 
-            "max_results": 5 if days else 3, 
-            "include_domains": doms
-        }
+        params = {"query": query, "search_depth": "advanced", "max_results": 5 if days else 3, "include_domains": doms}
         if days: params["days"] = days
-        
         response = tavily.search(**params)
         txt = "### WEB RESULTS:\n"
         for r in response['results']:
@@ -287,10 +274,9 @@ def get_logo_html():
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
     return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 15px;">'
 
-# --- THEME STABLE (CSS MINIMAL / SAFE MODE) ---
+# --- THEME STABLE (SAFE MODE) ---
 def apply_theme():
-    # Uniquement le CSS essentiel pour les composants personnalisés
-    # Pas de modification globale du body/sidebar pour éviter les boucles infinies
+    # CSS minimaliste pour éviter les conflits
     st.markdown("""
     <style>
     /* Carte Info */
@@ -304,7 +290,6 @@ def apply_theme():
         background-color: #295A63 !important; color: white !important; 
         border-radius: 8px; font-weight: 600; width: 100%; border: none;
     }
-    div.stButton > button:first-child:hover { filter: brightness(1.1); }
     
     /* Bouton Fantôme Logo */
     div[data-testid="stSidebar"] .stButton:first-of-type {
@@ -436,7 +421,9 @@ def page_olivia():
                 
                 resp = cached_ai_generation(p, config.OPENAI_MODEL, 0.1)
                 st.session_state["last_olivia_report"] = resp
-                st.session_state["last_olivia_id"] = str(uuid.uuid4())
+                
+                new_id = str(uuid.uuid4())
+                st.session_state["last_olivia_id"] = new_id
                 log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)}")
                 st.toast("Analysis Ready!", icon="✅")
                 st.rerun()
@@ -447,11 +434,12 @@ def page_olivia():
         st.success("✅ Analysis Generated")
         st.markdown(st.session_state["last_olivia_report"])
         st.markdown("---")
+        # Sécurité PDF : si ça plante, on propose le texte
         try:
             pdf = generate_pdf_report("Regulatory Analysis Report", st.session_state["last_olivia_report"], st.session_state.get("last_olivia_id", "ID"))
             st.download_button("📥 Download PDF", pdf, f"VALHALLAI_Report.pdf", "application/pdf")
         except:
-            st.download_button("📥 Download Text", st.session_state["last_olivia_report"], "report.md")
+            st.download_button("📥 Download Raw Text", st.session_state["last_olivia_report"], "report.txt")
 
 def page_eva():
     st.title("🔍 EVA Workspace")
@@ -472,11 +460,12 @@ def page_eva():
         st.markdown("### Audit Results")
         st.markdown(st.session_state["last_eva_report"])
         st.markdown("---")
+        # Sécurité PDF
         try:
             pdf = generate_pdf_report("Compliance Audit Report", st.session_state["last_eva_report"], st.session_state.get("last_eva_id", "ID"))
             st.download_button("📥 Download PDF", pdf, f"VALHALLAI_Audit.pdf", "application/pdf")
         except:
-            st.download_button("📥 Download Text", st.session_state["last_eva_report"], "audit.md")
+            st.download_button("📥 Download Raw Text", st.session_state["last_eva_report"], "audit.txt")
 
 def page_dashboard():
     st.title("Dashboard")
@@ -505,14 +494,12 @@ def render_sidebar():
         st.markdown("---")
         pages = ["Dashboard", "OlivIA", "EVA", "MIA", "Admin"]
         curr = st.session_state["current_page"]
-        sel = st.radio("NAV", pages, index=pages.index(curr) if curr in pages else 0, label_visibility="collapsed")
-        if sel != curr: navigate_to(sel)
-        st.markdown("---")
-        # Toggle Dark Mode
-        if st.checkbox("Dark Mode", value=st.session_state["dark_mode"]):
-            st.session_state["dark_mode"] = True; st.rerun()
-        else:
-            st.session_state["dark_mode"] = False; st.rerun()
+        
+        # Navigation fluide sans rerun
+        idx = pages.index(curr) if curr in pages else 0
+        def on_nav_change(): st.session_state["current_page"] = st.session_state["nav_radio"]
+        st.radio("NAV", pages, index=idx, key="nav_radio", on_change=on_nav_change, label_visibility="collapsed")
+        
         st.markdown("---")
         if st.button("Log Out"): logout(); st.rerun()
 
