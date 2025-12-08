@@ -333,7 +333,7 @@ def page_mia():
     markets, _ = get_markets()
     c1, c2, c3 = st.columns([2, 2, 1], gap="large")
     with c1: topic = st.text_input("🔎 Watch Topic / Product", placeholder="e.g. Cybersecurity for SaMD")
-    with c2: selected_markets = st.multiselect("🌍 Markets", markets, default=[markets[0]] if markets else None)
+    with c2: selected_markets = st.multiselect("🌍 Markets", markets, default=[markets[0]] if markets else [])
     with c3:
         timeframe_map = {"⚡ Last 30 Days": 30, "📅 Last 12 Months": 365, "🏛️ Last 3 Years": 1095}
         selected_label = st.selectbox("⏱️ Timeframe", list(timeframe_map.keys()), index=1)
