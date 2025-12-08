@@ -31,6 +31,7 @@ if "mia" not in config.AGENTS:
         "description": "Market Intelligence Agent (Regulatory Watch & Monitoring)."
     }
 
+# LISTE DE SECOURS (FALLBACK)
 DEFAULT_DOMAINS = [
     "eur-lex.europa.eu", "europa.eu", "echa.europa.eu", "cenelec.eu", 
     "single-market-economy.ec.europa.eu",
@@ -48,6 +49,7 @@ def init_session_state():
         "authenticated": False,
         "admin_authenticated": False,
         "current_page": "Dashboard",
+        # On laisse l'utilisateur gérer son mode sombre via les settings Streamlit
         "last_olivia_report": None,
         "last_olivia_id": None, 
         "last_eva_report": None,
@@ -97,7 +99,8 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
         if not log_sheet.cell(1, 1).value:
             log_sheet.update("A1:F1", [["Date", "Time", "Report ID", "Type", "Details", "Metrics"]])
         now = datetime.now()
-        log_sheet.append_row([now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), report_id, report_type, details, extra_metrics])
+        row = [now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), report_id, report_type, details, extra_metrics]
+        log_sheet.append_row(row)
     except: pass
 
 def get_markets():
@@ -251,7 +254,6 @@ def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     """
 
 def get_logo_html():
-    # Logo SVG Simple (Couleurs fixes pour éviter bug)
     svg = """<svg width="60" height="60" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
         <rect x="10" y="10" width="38" height="38" rx="8" fill="#295A63"/>
         <rect x="52" y="10" width="38" height="38" rx="8" fill="#C8A951"/>
@@ -261,53 +263,51 @@ def get_logo_html():
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
     return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 15px;">'
 
-# --- THEME STABLE & RAPIDE (CSS) ---
+# --- THEME STABLE (CSS MINIMAL) ---
 def apply_theme():
-    # On utilise du CSS léger uniquement pour les cartes et le logo
-    # On laisse Streamlit gérer le Dark Mode natif
-    st.markdown("""
+    # On supprime le CSS qui force les couleurs sur la sidebar et les inputs
+    # On ne garde que la mise en forme des cartes et du logo
+    c = config.COLORS["light"] # On utilise les codes couleurs juste pour les classes custom
+    
+    st.markdown(f"""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
     
-    /* POLICE & TITRES */
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-    h1, h2, h3 { font-family: 'Montserrat', sans-serif !important; color: #295A63 !important; }
+    /* POLICE GÉNÉRALE */
+    html, body, [class*="css"] {{ font-family: 'Inter', sans-serif; }}
     
-    /* Pour le Dark Mode natif, on force les titres en blanc/or si besoin, 
-       mais ici on reste simple pour la stabilité */
-    @media (prefers-color-scheme: dark) {
-        h1, h2, h3 { color: #C8A951 !important; }
-    }
-
-    /* CARTES DU DASHBOARD */
-    .info-card { 
-        padding: 2rem; 
-        border-radius: 12px; 
-        border: 1px solid #E2E8F0; 
-        background-color: transparent; /* S'adapte au thème */
-        min-height: 220px; 
-        display: flex; flex-direction: column; justify-content: flex-start;
-    }
-    
-    /* LOGO */
-    .logo-text { font-family: 'Montserrat', sans-serif; font-weight: 700; font-size: 1.4rem; }
-    .logo-sub { font-size: 0.7rem; letter-spacing: 2px; text-transform: uppercase; opacity: 0.8; font-weight: 500; }
+    /* TITRES AUX COULEURS DE LA MARQUE */
+    h1, h2, h3 {{ font-family: 'Montserrat', sans-serif !important; color: #295A63 !important; }}
     
     /* BOUTONS VERTS (VALHALLAI GREEN) */
-    div.stButton > button:first-child { 
+    div.stButton > button:first-child {{ 
         background-color: #295A63 !important; 
         color: white !important; 
         border-radius: 8px; font-weight: 600; width: 100%; border: none;
-    }
-    div.stButton > button:first-child:hover { filter: brightness(1.1); }
+    }}
+    div.stButton > button:first-child:hover {{ filter: brightness(1.1); }}
 
+    /* INFO CARDS (DASHBOARD) */
+    .info-card {{ 
+        padding: 2rem; 
+        border-radius: 12px; 
+        border: 1px solid #E2E8F0; 
+        /* Pas de background-color forcé ici pour laisser le thème natif agir */
+        min-height: 220px; 
+        display: flex; flex-direction: column; justify-content: flex-start;
+    }}
+    
+    /* LOGO TEXT */
+    .logo-text {{ font-family: 'Montserrat', sans-serif; font-weight: 700; font-size: 1.4rem; }}
+    .logo-sub {{ font-size: 0.7rem; letter-spacing: 2px; text-transform: uppercase; opacity: 0.8; font-weight: 500; }}
+    
     /* GHOST BUTTON (Navigation Logo) */
-    div[data-testid="stSidebar"] .stButton:first-of-type {
+    div[data-testid="stSidebar"] .stButton:first-of-type {{
         position: absolute; top: 1rem; left: 1rem; width: 85%; height: 100px; z-index: 999;
-    }
-    div[data-testid="stSidebar"] .stButton:first-of-type button {
+    }}
+    div[data-testid="stSidebar"] .stButton:first-of-type button {{
         width: 100%; height: 100%; opacity: 0; cursor: pointer;
-    }
+    }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -392,7 +392,7 @@ def page_mia():
         items = results.get("items", [])
         filtered = [i for i in items if i.get('impact','Low').capitalize() in sel_impacts and i.get('category','News').capitalize() in sel_types]
         
-        if not filtered: st.warning("No updates matching filters.")
+        if not filtered: st.warning("No updates found matching filters.")
         for item in filtered:
             impact = item.get('impact', 'Low').lower()
             cat = item.get('category', 'News')
@@ -431,8 +431,10 @@ def page_olivia():
                 
                 resp = cached_ai_generation(p, config.OPENAI_MODEL, 0.1)
                 st.session_state["last_olivia_report"] = resp
-                st.session_state["last_olivia_id"] = str(uuid.uuid4())
-                log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)}")
+                
+                new_id = str(uuid.uuid4())
+                st.session_state["last_olivia_id"] = new_id
+                log_usage("OlivIA", new_id, desc, f"Mkts:{len(ctrys)}")
                 st.toast("Analysis Ready!", icon="✅")
                 st.rerun()
             except Exception as e: st.error(str(e))
@@ -503,6 +505,7 @@ def render_sidebar():
         sel = st.radio("NAV", pages, index=pages.index(curr) if curr in pages else 0, label_visibility="collapsed")
         if sel != curr: navigate_to(sel)
         st.markdown("---")
+        # Le bouton Dark Mode a été retiré de la sidebar car il est géré par Settings
         if st.button("Log Out"): logout(); st.rerun()
 
 def render_login():
