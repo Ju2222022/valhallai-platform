@@ -4,10 +4,11 @@ import io
 import base64
 from openai import OpenAI
 from pypdf import PdfReader
-import gspread # La librairie pour Google Sheets
+import gspread 
 
-# Import de la configuration
+# Imports locaux
 import config
+from utils_pdf import generate_pdf_report
 
 # =============================================================================
 # 1. CONFIGURATION STREAMLIT
@@ -38,7 +39,7 @@ def init_session_state():
 init_session_state()
 
 # =============================================================================
-# 3. GESTION DES MARCHÉS (GOOGLE SHEETS - VERSION ROBUSTE)
+# 3. GESTION DES MARCHÉS (GOOGLE SHEETS - ROBUSTE)
 # =============================================================================
 @st.cache_resource
 def get_gsheet_connection():
@@ -51,7 +52,6 @@ def get_gsheet_connection():
         sa_secrets = st.secrets["service_account"]
         
         # --- NETTOYAGE ET RÉPARATION DE LA CLÉ PRIVÉE ---
-        # C'est ici que la magie opère pour réparer votre erreur "No key detected"
         raw_key = sa_secrets.get("private_key", "")
         
         # 1. Gestion des sauts de ligne (littéraux vs réels)
@@ -63,7 +63,7 @@ def get_gsheet_connection():
         if "-----END PRIVATE KEY-----" not in clean_key:
             clean_key = clean_key.strip() + "\n-----END PRIVATE KEY-----"
             
-        # 3. Reconstitution du dictionnaire propre pour gspread
+        # 3. Reconstitution du dictionnaire propre
         creds_dict = {
             "type": sa_secrets["type"],
             "project_id": sa_secrets["project_id"],
@@ -80,11 +80,10 @@ def get_gsheet_connection():
         # Connexion
         gc = gspread.service_account_from_dict(creds_dict)
         sh = gc.open_by_url(st.secrets["gsheets"]["url"])
-        return sh.sheet1 # On travaille sur le premier onglet
+        return sh.sheet1 
         
     except Exception as e:
         st.error(f"❌ Erreur connexion Google Sheets détaillée: {e}")
-        # Affiche un indice sur la clé pour le débogage (sans la révéler entièrement)
         if "clean_key" in locals():
             st.code(f"Aperçu clé générée: {clean_key[:35]} ... {clean_key[-35:]}")
         return None
@@ -94,7 +93,6 @@ def get_markets():
     sheet = get_gsheet_connection()
     if sheet:
         try:
-            # Récupère toute la colonne A
             vals = sheet.col_values(1)
             return vals if vals else []
         except:
@@ -109,7 +107,7 @@ def add_market(market_name):
             current = sheet.col_values(1)
             if market_name not in current:
                 sheet.append_row([market_name])
-                st.cache_data.clear() # Force le rechargement
+                st.cache_data.clear()
                 return True
         except Exception as e:
             st.error(f"Erreur d'écriture : {e}")
@@ -120,7 +118,6 @@ def remove_market(index):
     sheet = get_gsheet_connection()
     if sheet:
         try:
-            # +1 car Google Sheets commence ligne 1
             sheet.delete_rows(index + 1)
             st.cache_data.clear()
         except Exception as e:
@@ -208,13 +205,9 @@ def create_eva_prompt(context, doc_text, output_lang):
     Mission: Verify compliance in {output_lang}. Start with ✅/⚠️/❌."""
 
 def get_logo_svg():
-    """Génère le logo SVG."""
     colors = config.COLORS["dark" if st.session_state["dark_mode"] else "light"]
-    c1 = colors["primary"]
-    c2 = colors["accent"]
-    c3 = "#1A3C42"
-    c4 = "#E6D5A7"
-    
+    c1, c2 = colors["primary"], colors["accent"]
+    c3, c4 = "#1A3C42", "#E6D5A7"
     return f"""
     <svg width="60" height="60" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
         <rect x="10" y="10" width="38" height="38" rx="8" fill="{c1}"/>
@@ -256,7 +249,6 @@ def page_admin():
         st.text_input("Admin Password", type="password", key="admin_pass_input", on_change=check_admin_password)
         return
     
-    # Check connection
     sheet = get_gsheet_connection()
     if not sheet:
         st.error("❌ Erreur : Impossible de se connecter au Google Sheet. Vérifiez les secrets.")
@@ -264,48 +256,37 @@ def page_admin():
 
     st.success(f"✅ Connecté à la base de données : {sheet.title}")
     
-    # --- Formulaire Ajout ---
     current_markets = get_markets()
     with st.form("add_form", clear_on_submit=True):
         col1, col2 = st.columns([3, 1])
         new = col1.text_input("Nouveau Marché")
         if col2.form_submit_button("Ajouter"):
             if new and add_market(new):
-                st.success(f"Ajouté : {new}")
-                st.rerun()
+                st.success(f"Ajouté : {new}"); st.rerun()
             else:
                 st.error("Erreur ou doublon")
 
-    # --- Liste ---
     st.markdown("### Marchés Actifs")
     for i, m in enumerate(current_markets):
         c1, c2, c3 = st.columns([4, 1, 1])
-        
-        # Mode lecture
         if st.session_state.get("editing_market_index") != i:
             c1.info(f"🌍 {m}")
             if c2.button("✏️", key=f"ed_{i}"):
-                st.session_state["editing_market_index"] = i
-                st.rerun()
+                st.session_state["editing_market_index"] = i; st.rerun()
             if c3.button("🗑️", key=f"del_{i}"):
-                remove_market(i)
-                st.rerun()
-        
-        # Mode édition
+                remove_market(i); st.rerun()
         else:
             new_val = c1.text_input("Edit", value=m, key=f"val_{i}", label_visibility="collapsed")
             if c2.button("💾", key=f"save_{i}"):
                 update_market(i, new_val)
-                st.session_state["editing_market_index"] = None
-                st.rerun()
+                st.session_state["editing_market_index"] = None; st.rerun()
             if c3.button("❌", key=f"cancel_{i}"):
-                st.session_state["editing_market_index"] = None
-                st.rerun()
+                st.session_state["editing_market_index"] = None; st.rerun()
 
 def page_olivia():
     agent = config.AGENTS["olivia"]
     st.title(f"{agent['icon']} {agent['name']} Workspace")
-    available_markets = get_markets() # Charge depuis GSheets
+    available_markets = get_markets()
     
     col1, col2 = st.columns([2, 1])
     with col1: desc = st.text_area("Product Definition", height=200, placeholder="Ex: Medical device class IIa...")
@@ -327,7 +308,22 @@ def page_olivia():
                     except Exception as e: st.error(str(e))
     
     if st.session_state["last_olivia_report"]:
-        st.markdown("---"); st.markdown(st.session_state["last_olivia_report"])
+        st.markdown("---")
+        st.success("✅ Analysis Generated Successfully")
+        
+        # --- PDF BUTTON ---
+        col_dl1, col_dl2 = st.columns([1, 4])
+        with col_dl1:
+            pdf_data = generate_pdf_report("Regulatory Analysis Report", st.session_state["last_olivia_report"])
+            st.download_button(
+                label="📄 Download PDF",
+                data=pdf_data,
+                file_name="VALHALLAI_Olivia_Report.pdf",
+                mime="application/pdf",
+            )
+        # ------------------
+        
+        st.markdown(st.session_state["last_olivia_report"])
 
 def page_dashboard():
     st.title("Dashboard")
@@ -360,6 +356,18 @@ def page_eva():
                     )
                     st.markdown("### Audit Results")
                     st.markdown(res.choices[0].message.content)
+                    
+                    # --- PDF BUTTON ---
+                    st.markdown("---")
+                    pdf_data = generate_pdf_report("Compliance Audit Report", res.choices[0].message.content)
+                    st.download_button(
+                        label="📄 Download Audit PDF",
+                        data=pdf_data,
+                        file_name="VALHALLAI_EVA_Audit.pdf",
+                        mime="application/pdf",
+                    )
+                    # ------------------
+                    
                 except Exception as e: st.error(str(e))
 
 def render_sidebar():
@@ -376,13 +384,10 @@ def render_sidebar():
         """, unsafe_allow_html=True)
         
         st.markdown("---")
-        # Navigation sécurisée : on vérifie que la page actuelle est valide
         pages = ["Dashboard", "OlivIA", "EVA", "Admin"]
         current = st.session_state["current_page"]
         idx = pages.index(current) if current in pages else 0
-        
         sel = st.radio("NAVIGATION", pages, index=idx)
-        
         if sel != st.session_state["current_page"]: navigate_to(sel)
         
         st.markdown("---")
