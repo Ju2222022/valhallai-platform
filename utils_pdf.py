@@ -2,7 +2,7 @@ import os
 import urllib.request
 from datetime import datetime
 from fpdf import FPDF
-from fpdf.fonts import FontFace
+from fpdf.fonts import FontFace  # Nécessaire pour le styling
 import markdown
 import config
 
@@ -13,7 +13,7 @@ FONT_PATH = "NotoSans-Regular.ttf"
 FONT_BOLD_PATH = "NotoSans-Bold.ttf"
 
 def ensure_fonts_exist():
-    """Télécharge les polices si elles sont absentes (pour Streamlit Cloud)."""
+    """Télécharge les polices si elles sont absentes."""
     if not os.path.exists(FONT_PATH):
         urllib.request.urlretrieve(FONT_URL, FONT_PATH)
     if not os.path.exists(FONT_BOLD_PATH):
@@ -26,13 +26,12 @@ class ValhallaiPDF(FPDF):
         self.title_doc = title_doc
         self.colors = config.COLORS["light"]
         
-        # Enregistrement de la police pour gérer l'Unicode (Arabe, etc.)
+        # Enregistrement de la police pour gérer l'Unicode
         self.add_font("NotoSans", style="", fname=FONT_PATH)
         self.add_font("NotoSans", style="B", fname=FONT_BOLD_PATH)
 
     def header(self):
         # --- 1. LOGO HARMONISÉ ---
-        # On décale légèrement pour aérer
         start_y = 12
         
         # Damier (Logo)
@@ -45,7 +44,7 @@ class ValhallaiPDF(FPDF):
         self.set_fill_color(230, 213, 167) # Light
         self.rect(16, start_y + 6, 5, 5, 'F')
 
-        # Titre "VALHALLAI" mieux aligné verticalement avec le logo
+        # Titre "VALHALLAI"
         self.set_font('NotoSans', 'B', 20)
         self.set_xy(24, start_y) 
         self.set_text_color(41, 90, 99)
@@ -85,18 +84,30 @@ class ValhallaiPDF(FPDF):
 
     def add_formatted_content(self, markdown_text):
         self.add_page()
-        self.set_font('NotoSans', '', 10) # Police de base du corps
+        self.set_font('NotoSans', '', 10)
         self.set_text_color(20, 20, 20)
 
-        # Conversion Markdown -> HTML pour gérer les TABLEAUX
+        # Conversion Markdown -> HTML
         html_text = markdown.markdown(
             markdown_text, 
             extensions=['tables', 'fenced_code']
         )
 
-        # Moteur de rendu HTML de FPDF2 (gère les tableaux !)
-        # On définit un style basique pour les tableaux
-        self.write_html(html_text, table_line_separators=True)
+        # --- STYLING PERSONNALISÉ (Pour virer le rouge) ---
+        # On force les titres en Vert Valhallai (#295A63)
+        # On force les entêtes de tableaux en fond Vert texte Blanc
+        primary_color = (41, 90, 99)
+        
+        tag_styles = {
+            "h1": FontFace(color=primary_color, emphasis="B"),
+            "h2": FontFace(color=primary_color, emphasis="B"),
+            "h3": FontFace(color=(26, 60, 66), emphasis="B"), # Darker green
+            "th": FontFace(color=(255, 255, 255), fill_color=primary_color, emphasis="B"),
+            "code": FontFace(color=(200, 169, 81)), # Gold pour le code inline
+        }
+
+        # Écriture du HTML avec styles appliqués
+        self.write_html(html_text, table_line_separators=True, tag_styles=tag_styles)
 
 def generate_pdf_report(title, content):
     pdf = ValhallaiPDF(title)
