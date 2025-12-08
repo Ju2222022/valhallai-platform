@@ -24,7 +24,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Configuration de l'agent MIA (Injectée localement si absente de config.py)
+# Configuration de l'agent MIA
 if "mia" not in config.AGENTS:
     config.AGENTS["mia"] = {
         "name": "MIA",
@@ -242,19 +242,30 @@ def create_eva_prompt(ctx, doc):
     Mission: Compliance Audit. Output: Strict English Markdown.
     Structure: 1. Verdict, 2. Gap Table (Requirement|Status|Evidence|Missing), 3. Risks, 4. Recommendations."""
 
-def create_mia_prompt(topic, markets, raw_search_data):
+def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
+    """Prompt pour MIA avec période dynamique."""
     return f"""
     ROLE: You are MIA (Market Intelligence Agent).
-    CONTEXT: User monitoring: "{topic}" | Markets: {', '.join(markets)} | Timeframe: Last 12 months.
-    RAW SEARCH DATA: {raw_search_data}
-    MISSION: Filter and Analyze. Keep only relevant updates.
+    CONTEXT: User monitoring: "{topic}" | Markets: {', '.join(markets)}
+    SELECTED TIMEFRAME: {timeframe_label}
+    
+    RAW SEARCH DATA (From Web):
+    {raw_search_data}
+    
+    MISSION:
+    1. Filter the raw data. Keep only updates published within the "{timeframe_label}".
+    2. Analyze the impact of each item (High/Medium/Low).
+    3. Generate a structured JSON output.
+    
     OUTPUT FORMAT (Strict JSON):
     {{
-        "executive_summary": "Summary...",
+        "executive_summary": "Summary of the activity during {timeframe_label}...",
         "items": [
             {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["..."], "impact": "High/Medium/Low" }}
         ]
     }}
+    
+    IMPORTANT: Return ONLY the JSON. No markdown fencing.
     """
 
 def get_logo_svg():
@@ -271,7 +282,6 @@ def get_logo_html():
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
     return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 15px;">'
 
-# --- C'EST LA FONCTION QUI MANQUAIT DANS LA VERSION PRÉCÉDENTE ---
 def apply_theme():
     mode = "dark" if st.session_state["dark_mode"] else "light"
     c = config.COLORS[mode]
@@ -346,23 +356,45 @@ def page_mia():
     st.markdown("---")
 
     markets, _ = get_markets()
-    col1, col2 = st.columns([2, 1])
-    with col1: topic = st.text_input("🔎 Watch Topic / Product", placeholder="e.g. Cybersecurity for SaMD")
-    with col2: selected_markets = st.multiselect("🌍 Markets", markets, default=[markets[0]] if markets else None)
+    col1, col2, col3 = st.columns([2, 1, 1]) # 3 colonnes
+    
+    with col1: 
+        topic = st.text_input("🔎 Watch Topic / Product", placeholder="e.g. Cybersecurity for SaMD")
+    with col2: 
+        selected_markets = st.multiselect("🌍 Markets", markets, default=[markets[0]] if markets else None)
+    with col3:
+        # SELECTEUR DE PÉRIODE
+        timeframe_map = {
+            "⚡ Last 30 Days": 30, 
+            "📅 Last 12 Months": 365, 
+            "🏛️ Last 3 Years": 1095
+        }
+        selected_label = st.selectbox("⏱️ Timeframe", list(timeframe_map.keys()), index=1)
+        days_limit = timeframe_map[selected_label]
 
-    if st.button("🚀 Launch Monitoring (Last 12 Months)", type="primary"):
+    if st.button(f"🚀 Launch Monitoring ({selected_label})", type="primary"):
         client = get_openai_client()
         if client and topic:
-            with st.spinner("📡 MIA is scanning the horizon... (Deep Search active)"):
+            with st.spinner(f"📡 MIA is scanning the horizon... ({selected_label})"):
                 try:
-                    query = f"New regulations and guidelines for {topic} in {', '.join(selected_markets)} released 2024 2025"
-                    raw_data, error = run_deep_search(query, days=365)
-                    if not raw_data: st.error(f"Search failed: {error}")
+                    # 1. Recherche avec limite de temps
+                    query = f"New regulations and guidelines for {topic} in {', '.join(selected_markets)} released recently"
+                    raw_data, error = run_deep_search(query, days=days_limit)
+                    
+                    if not raw_data:
+                        st.error(f"Search failed: {error}")
                     else:
-                        prompt = create_mia_prompt(topic, selected_markets, raw_data)
-                        res = client.chat.completions.create(model=config.OPENAI_MODEL, messages=[{"role": "user", "content": prompt}], temperature=0.1, response_format={"type": "json_object"})
+                        # 2. Prompt mis à jour avec le label temporel
+                        prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
+                        res = client.chat.completions.create(
+                            model=config.OPENAI_MODEL,
+                            messages=[{"role": "user", "content": prompt}],
+                            temperature=0.1,
+                            response_format={"type": "json_object"}
+                        )
                         st.session_state["last_mia_results"] = json.loads(res.choices[0].message.content)
-                        log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | Items: {len(st.session_state['last_mia_results'].get('items', []))}")
+                        
+                        log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
                         st.rerun()
                 except Exception as e: st.error(f"Error: {e}")
 
@@ -371,13 +403,17 @@ def page_mia():
         st.markdown("### 📋 Monitoring Report")
         st.info(f"**Executive Summary:** {results.get('executive_summary', 'No summary.')}")
         st.markdown("---")
+        
         items = results.get("items", [])
-        if not items: st.warning("No significant updates found.")
+        if not items:
+            st.warning("No significant updates found for this period.")
+        
         for item in items:
             impact = item.get('impact', 'Low').lower()
             if impact == 'high': icon = "🔴"
             elif impact == 'medium': icon = "🟡"
             else: icon = "🟢"
+            
             with st.container():
                 c1, c2 = st.columns([0.1, 0.9])
                 with c1: st.markdown(f"## {icon}")
