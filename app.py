@@ -38,26 +38,37 @@ def init_session_state():
 init_session_state()
 
 # =============================================================================
-# 3. GESTION DES MARCHÉS (GOOGLE SHEETS - BLINDÉE)
+# 3. GESTION DES MARCHÉS (GOOGLE SHEETS - VERSION ROBUSTE)
 # =============================================================================
 @st.cache_resource
 def get_gsheet_connection():
-    """Connexion sécurisée à Google Sheets via Secrets."""
+    """Connexion ultra-robuste à Google Sheets qui répare la clé privée."""
     try:
-        # Vérification de base
         if "service_account" not in st.secrets:
             st.error("⚠️ Secrets 'service_account' introuvables.")
             return None
             
-        # On construit le dictionnaire manuellement pour éviter les erreurs de parsing
-        # Cela force les clés à être présentes
         sa_secrets = st.secrets["service_account"]
         
+        # --- NETTOYAGE ET RÉPARATION DE LA CLÉ PRIVÉE ---
+        # C'est ici que la magie opère pour réparer votre erreur "No key detected"
+        raw_key = sa_secrets.get("private_key", "")
+        
+        # 1. Gestion des sauts de ligne (littéraux vs réels)
+        clean_key = raw_key.replace("\\n", "\n")
+        
+        # 2. Vérification et ajout des en-têtes si manquants
+        if "-----BEGIN PRIVATE KEY-----" not in clean_key:
+            clean_key = "-----BEGIN PRIVATE KEY-----\n" + clean_key.strip()
+        if "-----END PRIVATE KEY-----" not in clean_key:
+            clean_key = clean_key.strip() + "\n-----END PRIVATE KEY-----"
+            
+        # 3. Reconstitution du dictionnaire propre pour gspread
         creds_dict = {
             "type": sa_secrets["type"],
             "project_id": sa_secrets["project_id"],
             "private_key_id": sa_secrets["private_key_id"],
-            "private_key": sa_secrets["private_key"].replace("\\n", "\n"), # Correction cruciale des sauts de ligne
+            "private_key": clean_key,
             "client_email": sa_secrets["client_email"],
             "client_id": sa_secrets["client_id"],
             "auth_uri": sa_secrets["auth_uri"],
@@ -70,9 +81,12 @@ def get_gsheet_connection():
         gc = gspread.service_account_from_dict(creds_dict)
         sh = gc.open_by_url(st.secrets["gsheets"]["url"])
         return sh.sheet1 # On travaille sur le premier onglet
+        
     except Exception as e:
-        # Affiche l'erreur exacte pour le débogage
-        st.error(f"❌ Erreur connexion Google Sheets: {e}")
+        st.error(f"❌ Erreur connexion Google Sheets détaillée: {e}")
+        # Affiche un indice sur la clé pour le débogage (sans la révéler entièrement)
+        if "clean_key" in locals():
+            st.code(f"Aperçu clé générée: {clean_key[:35]} ... {clean_key[-35:]}")
         return None
 
 def get_markets():
@@ -362,7 +376,12 @@ def render_sidebar():
         """, unsafe_allow_html=True)
         
         st.markdown("---")
-        sel = st.radio("NAVIGATION", ["Dashboard", "OlivIA", "EVA", "Admin"], index=["Dashboard", "OlivIA", "EVA", "Admin"].index(st.session_state["current_page"]) if st.session_state["current_page"] in ["Dashboard", "OlivIA", "EVA", "Admin"] else 0)
+        # Navigation sécurisée : on vérifie que la page actuelle est valide
+        pages = ["Dashboard", "OlivIA", "EVA", "Admin"]
+        current = st.session_state["current_page"]
+        idx = pages.index(current) if current in pages else 0
+        
+        sel = st.radio("NAVIGATION", pages, index=idx)
         
         if sel != st.session_state["current_page"]: navigate_to(sel)
         
