@@ -263,9 +263,9 @@ def get_logo_html():
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
     return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 15px;">'
 
-# --- THEME CSS CLEAN (Sans Hacks) ---
+# --- THEME STABLE (CSS MINIMAL) ---
 def apply_theme():
-    # CSS minimaliste pour les composants custom uniquement
+    # CSS minimaliste pour éviter les conflits
     st.markdown("""
     <style>
     /* Carte Info */
@@ -278,6 +278,7 @@ def apply_theme():
         background-color: #295A63 !important; color: white !important; 
         border-radius: 8px; font-weight: 600; width: 100%; border: none;
     }
+    div.stButton > button:first-child:hover { filter: brightness(1.1); }
     </style>
     """, unsafe_allow_html=True)
 
@@ -339,7 +340,7 @@ def page_mia():
                     if json_str:
                         st.session_state["last_mia_results"] = json.loads(json_str)
                         log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
-                        st.rerun() # Rerun légitime ici (après action utilisateur)
+                        # PAS DE RERUN ICI - On laisse Streamlit recharger naturellement
                     else: st.error("Analysis failed.")
 
     results = st.session_state.get("last_mia_results")
@@ -404,7 +405,7 @@ def page_olivia():
                 new_id = str(uuid.uuid4())
                 st.session_state["last_olivia_id"] = new_id
                 log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)}")
-                st.rerun()
+                # PAS DE RERUN - Laisser Streamlit faire
             except Exception as e: st.error(str(e))
 
     if st.session_state["last_olivia_report"]:
@@ -430,7 +431,7 @@ def page_eva():
                 st.session_state["last_eva_report"] = resp
                 st.session_state["last_eva_id"] = str(uuid.uuid4())
                 log_usage("EVA", st.session_state["last_eva_id"], f"File: {up.name}")
-                st.rerun()
+                # PAS DE RERUN
             except Exception as e: st.error(str(e))
     
     if st.session_state.get("last_eva_report"):
@@ -449,12 +450,13 @@ def page_dashboard():
     st.markdown("###")
     c1, c2, c3 = st.columns(3)
     
+    # NAVIGATION SIMPLE VIA SESSION STATE (Pas de on_click)
     with c1: 
         st.markdown(f"""<div class="info-card"><h3>🤖 OlivIA</h3><p class='sub-text'>{config.AGENTS['olivia']['description']}</p></div>""", unsafe_allow_html=True)
         st.write("")
         if st.button("Launch OlivIA ->"): 
             st.session_state["current_page"] = "OlivIA"
-            st.rerun()
+            st.rerun() # Rerun légitime ici (changement de page)
     with c2: 
         st.markdown(f"""<div class="info-card"><h3>🔍 EVA</h3><p class='sub-text'>{config.AGENTS['eva']['description']}</p></div>""", unsafe_allow_html=True)
         st.write("")
@@ -470,21 +472,27 @@ def page_dashboard():
 
 def render_sidebar():
     with st.sidebar:
+        # BOUTON SIMPLE "HOME" (Plus de bouton fantôme)
+        if st.button("🏠 Dashboard", use_container_width=True):
+             st.session_state["current_page"] = "Dashboard"
+             st.rerun()
+
         st.markdown(get_logo_html(), unsafe_allow_html=True)
         st.markdown(f"<div class='logo-text'>{config.APP_NAME}</div>", unsafe_allow_html=True)
         st.markdown("---")
         
-        # NAVIGATION ROBUSTE (Sans Callback on_change, pour éviter les bugs)
         pages = ["Dashboard", "OlivIA", "EVA", "MIA", "Admin"]
         curr = st.session_state["current_page"]
         
-        # Si la page actuelle n'est pas dans la liste (ex: après reload), reset Dashboard
-        if curr not in pages: curr = "Dashboard"
+        # Navigation standard (plus de callbacks)
+        # Si la page actuelle n'est pas dans la liste, on reset
+        idx = pages.index(curr) if curr in pages else 0
         
-        selection = st.radio("NAV", pages, index=pages.index(curr), label_visibility="collapsed")
+        selected = st.radio("NAV", pages, index=idx, label_visibility="collapsed")
         
-        if selection != curr:
-            st.session_state["current_page"] = selection
+        # Détection du changement
+        if selected != curr:
+            st.session_state["current_page"] = selected
             st.rerun()
 
         st.markdown("---")
