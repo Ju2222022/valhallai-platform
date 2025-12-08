@@ -38,27 +38,40 @@ def init_session_state():
 init_session_state()
 
 # =============================================================================
-# 3. GESTION DES MARCHÉS (GOOGLE SHEETS)
+# 3. GESTION DES MARCHÉS (GOOGLE SHEETS - BLINDÉE)
 # =============================================================================
 @st.cache_resource
 def get_gsheet_connection():
     """Connexion sécurisée à Google Sheets via Secrets."""
     try:
-        # On charge les infos du service account depuis secrets.toml
+        # Vérification de base
         if "service_account" not in st.secrets:
             st.error("⚠️ Secrets 'service_account' introuvables.")
             return None
             
-        credentials = dict(st.secrets["service_account"])
+        # On construit le dictionnaire manuellement pour éviter les erreurs de parsing
+        # Cela force les clés à être présentes
+        sa_secrets = st.secrets["service_account"]
         
-        # Correction format clé privée (remplace les \n littéraux par des sauts de ligne)
-        if "private_key" in credentials:
-            credentials["private_key"] = credentials["private_key"].replace("\\n", "\n")
+        creds_dict = {
+            "type": sa_secrets["type"],
+            "project_id": sa_secrets["project_id"],
+            "private_key_id": sa_secrets["private_key_id"],
+            "private_key": sa_secrets["private_key"].replace("\\n", "\n"), # Correction cruciale des sauts de ligne
+            "client_email": sa_secrets["client_email"],
+            "client_id": sa_secrets["client_id"],
+            "auth_uri": sa_secrets["auth_uri"],
+            "token_uri": sa_secrets["token_uri"],
+            "auth_provider_x509_cert_url": sa_secrets["auth_provider_x509_cert_url"],
+            "client_x509_cert_url": sa_secrets["client_x509_cert_url"]
+        }
 
-        gc = gspread.service_account_from_dict(credentials)
+        # Connexion
+        gc = gspread.service_account_from_dict(creds_dict)
         sh = gc.open_by_url(st.secrets["gsheets"]["url"])
         return sh.sheet1 # On travaille sur le premier onglet
     except Exception as e:
+        # Affiche l'erreur exacte pour le débogage
         st.error(f"❌ Erreur connexion Google Sheets: {e}")
         return None
 
@@ -180,14 +193,25 @@ def create_eva_prompt(context, doc_text, output_lang):
     return f"""You are EVA (VALHALLAI). Context: {context}. Doc: '''{doc_text[:6000]}'''. 
     Mission: Verify compliance in {output_lang}. Start with ✅/⚠️/❌."""
 
-def get_logo_html():
+def get_logo_svg():
+    """Génère le logo SVG."""
     colors = config.COLORS["dark" if st.session_state["dark_mode"] else "light"]
-    svg = f"""<svg width="60" height="60" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <rect x="10" y="10" width="38" height="38" rx="8" fill="{colors['primary']}"/>
-        <rect x="52" y="10" width="38" height="38" rx="8" fill="{colors['accent']}"/>
-        <rect x="10" y="52" width="38" height="38" rx="8" fill="#1A3C42"/>
-        <rect x="52" y="52" width="38" height="38" rx="8" fill="#E6D5A7"/>
-    </svg>"""
+    c1 = colors["primary"]
+    c2 = colors["accent"]
+    c3 = "#1A3C42"
+    c4 = "#E6D5A7"
+    
+    return f"""
+    <svg width="60" height="60" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <rect x="10" y="10" width="38" height="38" rx="8" fill="{c1}"/>
+        <rect x="52" y="10" width="38" height="38" rx="8" fill="{c2}"/>
+        <rect x="10" y="52" width="38" height="38" rx="8" fill="{c3}"/>
+        <rect x="52" y="52" width="38" height="38" rx="8" fill="{c4}"/>
+    </svg>
+    """
+
+def get_logo_html():
+    svg = get_logo_svg()
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
     return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 15px;">'
 
@@ -201,7 +225,8 @@ def apply_theme():
     h1, h2, h3 {{ font-family: 'Montserrat', sans-serif !important; color: {c['primary']} !important; }}
     .info-card {{ background-color: {c['card']}; padding: 2rem; border-radius: 12px; border: 1px solid {c['border']}; }}
     .logo-text {{ font-family: 'Montserrat', sans-serif; font-weight: 700; font-size: 1.4rem; color: {c['text']}; }}
-    div.stButton > button:first-child {{ background-color: {c['primary']} !important; color: {c['button_text']} !important; border-radius: 8px; font-weight: 600; }}
+    .logo-sub {{ font-size: 0.7rem; letter-spacing: 2px; text-transform: uppercase; color: {c['text_secondary']}; font-weight: 500; }}
+    div.stButton > button:first-child {{ background-color: {c['primary']} !important; color: {c['button_text']} !important; border-radius: 8px; font-weight: 600; width: 100%;}}
     </style>
     """, unsafe_allow_html=True)
 
@@ -290,33 +315,72 @@ def page_olivia():
     if st.session_state["last_olivia_report"]:
         st.markdown("---"); st.markdown(st.session_state["last_olivia_report"])
 
-# --- Autres pages simplifiées pour tenir dans la réponse ---
 def page_dashboard():
-    st.title("Dashboard"); col1, col2 = st.columns(2)
+    st.title("Dashboard")
+    st.markdown(f"<span class='sub-text'>{config.APP_SLOGAN}</span>", unsafe_allow_html=True)
+    st.markdown("###")
+    col1, col2 = st.columns(2)
     with col1: 
-        st.info("🤖 OlivIA"); 
-        if st.button("Launch OlivIA"): navigate_to("OlivIA")
+        st.markdown(f"""<div class="info-card"><h3>🤖 OlivIA</h3><p class='sub-text'>{config.AGENTS['olivia']['description']}</p></div>""", unsafe_allow_html=True)
+        st.write("")
+        if st.button("Launch OlivIA Analysis ->"): navigate_to("OlivIA")
     with col2: 
-        st.info("🔍 EVA"); 
-        if st.button("Launch EVA"): navigate_to("EVA")
+        st.markdown(f"""<div class="info-card"><h3>🔍 EVA</h3><p class='sub-text'>{config.AGENTS['eva']['description']}</p></div>""", unsafe_allow_html=True)
+        st.write("")
+        if st.button("Launch EVA Audit ->"): navigate_to("EVA")
 
 def page_eva():
     st.title("EVA Workspace")
     ctx = st.text_area("Context", value=st.session_state.get("last_olivia_report", ""))
     up = st.file_uploader("PDF", type="pdf")
-    if st.button("Audit") and up and get_openai_client():
-        txt = extract_text_from_pdf(up.read())
-        res = get_openai_client().chat.completions.create(
-            model="gpt-4o", messages=[{"role":"user","content":create_eva_prompt(ctx,txt,"English")}]
-        )
-        st.markdown(res.choices[0].message.content)
+    lang = st.selectbox("Audit Language", config.AVAILABLE_LANGUAGES)
+    
+    if st.button("Audit"):
+        client = get_openai_client()
+        if client and up:
+            with st.spinner("Auditing..."):
+                txt = extract_text_from_pdf(up.read())
+                try:
+                    res = client.chat.completions.create(
+                        model="gpt-4o", messages=[{"role":"user","content":create_eva_prompt(ctx,txt,lang)}], temperature=config.OPENAI_TEMPERATURE
+                    )
+                    st.markdown("### Audit Results")
+                    st.markdown(res.choices[0].message.content)
+                except Exception as e: st.error(str(e))
 
 def render_sidebar():
     with st.sidebar:
-        st.markdown(get_logo_html(), unsafe_allow_html=True)
-        sel = st.radio("MENU", ["Dashboard", "OlivIA", "EVA", "Admin"])
+        logo_html = get_logo_html()
+        st.markdown(f"""
+        <div style="display: flex; align-items: center; margin-bottom: 1rem;">
+            {logo_html}
+            <div>
+                <div class="logo-text">{config.APP_NAME}</div>
+                <div class="logo-sub">{config.APP_TAGLINE}</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
+        st.markdown("---")
+        sel = st.radio("NAVIGATION", ["Dashboard", "OlivIA", "EVA", "Admin"], index=["Dashboard", "OlivIA", "EVA", "Admin"].index(st.session_state["current_page"]) if st.session_state["current_page"] in ["Dashboard", "OlivIA", "EVA", "Admin"] else 0)
+        
         if sel != st.session_state["current_page"]: navigate_to(sel)
-        if st.button("Logout"): logout(); st.rerun()
+        
+        st.markdown("---")
+        is_dark = st.checkbox("Night Mode", value=st.session_state["dark_mode"])
+        if is_dark != st.session_state["dark_mode"]: st.session_state["dark_mode"] = is_dark; st.rerun()
+        
+        st.markdown("---")
+        if st.button("Log Out"): logout(); st.rerun()
+
+def render_login():
+    col1, col2, col3 = st.columns([1, 1.5, 1])
+    with col2:
+        st.markdown("<br><br><br>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align:center'>{get_logo_html()}</div>", unsafe_allow_html=True)
+        st.markdown(f"<h1 style='text-align: center; color: #295A63;'>{config.APP_NAME}</h1>", unsafe_allow_html=True)
+        st.markdown(f"<p style='text-align: center; color: #666;'>{config.APP_TAGLINE}</p>", unsafe_allow_html=True)
+        st.text_input("Security Token", type="password", key="password_input", on_change=check_password)
 
 def main():
     apply_theme()
@@ -326,7 +390,8 @@ def main():
         elif st.session_state["current_page"] == "OlivIA": page_olivia()
         elif st.session_state["current_page"] == "EVA": page_eva()
         elif st.session_state["current_page"] == "Admin": page_admin()
+        else: page_dashboard()
     else:
-        st.text_input("Password", type="password", key="password_input", on_change=check_password)
+        render_login()
 
 if __name__ == "__main__": main()
