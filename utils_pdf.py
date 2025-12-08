@@ -84,8 +84,15 @@ class ValhallaiPDF(FPDF):
 
     def add_formatted_content(self, markdown_text):
         self.add_page()
-        self.set_font('NotoSans', '', 10)
-        self.set_text_color(20, 20, 20)
+        
+        # --- RÉGLAGES POUR TABLEAUX PROPRES ---
+        # 1. On réduit la taille de police par défaut (9pt) pour que les tableaux respirent
+        self.set_font('NotoSans', '', 9)
+        self.set_text_color(30, 30, 30) # Gris très foncé (moins agressif que noir pur)
+        
+        # 2. On règle les lignes de dessin pour le tableau (Gris clair et fin)
+        self.set_draw_color(200, 200, 200) # Gris clair
+        self.set_line_width(0.1) # Trait très fin
 
         # Conversion Markdown -> HTML
         html_text = markdown.markdown(
@@ -93,19 +100,18 @@ class ValhallaiPDF(FPDF):
             extensions=['tables', 'fenced_code']
         )
 
-        # --- STYLING CORRIGÉ (Simplifié pour éviter le crash) ---
-        # On ne style que les titres (h1, h2, h3) pour éviter l'erreur NotImplementedError
-        # sur les balises complexes comme 'th' ou 'code'.
+        # --- STYLING SÉCURISÉ ---
+        # On garde uniquement les styles de texte supportés à 100%
         primary_color = (41, 90, 99)
         
         tag_styles = {
-            "h1": FontFace(color=primary_color, emphasis="B"),
-            "h2": FontFace(color=primary_color, emphasis="B"),
-            "h3": FontFace(color=(26, 60, 66), emphasis="B"),
-            # J'ai retiré 'th' et 'code' qui causaient le crash
+            "h1": FontFace(color=primary_color, emphasis="B", size_pt=16),
+            "h2": FontFace(color=primary_color, emphasis="B", size_pt=14),
+            "h3": FontFace(color=(26, 60, 66), emphasis="B", size_pt=12),
+            # On retire tout styling de table ici pour éviter les bugs
         }
 
-        # Écriture du HTML avec styles appliqués
+        # Écriture du HTML
         self.write_html(html_text, table_line_separators=True, tag_styles=tag_styles)
 
 def generate_pdf_report(title, content):
