@@ -410,7 +410,7 @@ def page_mia():
         st.markdown("### 📋 Monitoring Report")
         st.info(f"**Executive Summary:** {results.get('executive_summary', 'No summary.')}")
         
-        # --- MISE EN PAGE CORRIGÉE (2-2-1) ---
+        # --- MISE EN PAGE UI/UX CORRIGÉE (2-2-1) ---
         c_filter1, c_filter2, c_legend = st.columns([2, 2, 1], gap="large")
         
         with c_filter1:
@@ -421,15 +421,14 @@ def page_mia():
             selected_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"])
             
         with c_legend:
-            # Spacer pour aligner verticalement avec les boîtes de saisie
-            st.write("") 
-            st.write("")
+            # STYLE UI : Légende Visuelle en HTML (plus gros, plus lisible)
             st.markdown(
                 """
-                <div style="padding-top: 5px; font-size: 0.9em; white-space: nowrap;">
-                    <span style='color: #e53935;'>●</span> High &nbsp;
-                    <span style='color: #fb8c00;'>●</span> Medium &nbsp;
-                    <span style='color: #43a047;'>●</span> Low
+                <div style="margin-top: 5px;">
+                    <strong>ℹ️ Impact Legend:</strong><br>
+                    <span style='font-size:1.1em; color: #e53935;'>●</span> <b>High</b> (Critical)<br>
+                    <span style='font-size:1.1em; color: #fb8c00;'>●</span> <b>Medium</b> (Imp.)<br>
+                    <span style='font-size:1.1em; color: #43a047;'>●</span> <b>Low</b> (Info)
                 </div>
                 """, 
                 unsafe_allow_html=True
