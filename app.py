@@ -48,7 +48,7 @@ def get_gsheet_connection():
     """Connexion ultra-robuste à Google Sheets qui répare la clé privée."""
     try:
         if "service_account" not in st.secrets:
-            st.error("⚠️ Secrets 'service_account' introuvables.")
+            st.error("⚠️ Secrets 'service_account' not found.")
             return None
             
         sa_secrets = st.secrets["service_account"]
@@ -80,9 +80,7 @@ def get_gsheet_connection():
         return sh.sheet1 
         
     except Exception as e:
-        st.error(f"❌ Erreur connexion Google Sheets détaillée: {e}")
-        if "clean_key" in locals():
-            st.code(f"Aperçu clé générée: {clean_key[:35]} ... {clean_key[-35:]}")
+        st.error(f"❌ Google Sheets Connection Error: {e}")
         return None
 
 def get_markets():
@@ -91,10 +89,12 @@ def get_markets():
     if sheet:
         try:
             vals = sheet.col_values(1)
-            return vals if vals else []
+            # Retourne un tuple : (Liste, est_live=True)
+            return (vals if vals else []), True
         except:
-            return config.DEFAULT_MARKETS
-    return config.DEFAULT_MARKETS
+            # Retourne un tuple : (Defaut, est_live=False)
+            return config.DEFAULT_MARKETS, False
+    return config.DEFAULT_MARKETS, False
 
 def add_market(market_name):
     """Ajoute un marché dans le Sheet."""
@@ -107,7 +107,7 @@ def add_market(market_name):
                 st.cache_data.clear()
                 return True
         except Exception as e:
-            st.error(f"Erreur d'écriture : {e}")
+            st.error(f"Write Error: {e}")
     return False
 
 def remove_market(index):
@@ -118,7 +118,7 @@ def remove_market(index):
             sheet.delete_rows(index + 1)
             st.cache_data.clear()
         except Exception as e:
-            st.error(f"Erreur de suppression : {e}")
+            st.error(f"Delete Error: {e}")
 
 def update_market(index, new_name):
     """Renomme un marché."""
@@ -128,7 +128,7 @@ def update_market(index, new_name):
             sheet.update_cell(index + 1, 1, new_name)
             st.cache_data.clear()
         except Exception as e:
-            st.error(f"Erreur de modification : {e}")
+            st.error(f"Update Error: {e}")
 
 # =============================================================================
 # 4. FONCTIONS UTILITAIRES
@@ -156,7 +156,7 @@ def extract_text_from_pdf(file_bytes):
                 text_parts.append(page_text)
         return "\n".join(text_parts)
     except Exception as e:
-        return f"{config.ERRORS['pdf_error']} Détail: {str(e)}"
+        return f"{config.ERRORS['pdf_error']} Detail: {str(e)}"
 
 # =============================================================================
 # 5. AUTHENTIFICATION
@@ -175,13 +175,13 @@ def check_password():
 def check_admin_password():
     admin_token = st.secrets.get("ADMIN_TOKEN")
     if not admin_token:
-        st.error(config.ERRORS["no_admin_token"]); return
+        st.error("Admin Token missing in secrets."); return
     
     if st.session_state.get("admin_pass_input", "") == admin_token:
         st.session_state["admin_authenticated"] = True
         del st.session_state["admin_pass_input"]
     else:
-        st.error(config.ERRORS["access_denied"])
+        st.error("Access Denied.")
 
 def logout():
     st.session_state["authenticated"] = False
@@ -189,17 +189,15 @@ def logout():
     st.session_state["current_page"] = "Dashboard"
 
 # =============================================================================
-# 6. PROMPTS IA (MODIFIÉS POUR ANGLAIS PAR DÉFAUT)
+# 6. PROMPTS IA
 # =============================================================================
 def create_olivia_prompt(description, countries):
-    # Langue retirée des arguments, fixée à "English"
     markets_str = ", ".join(countries)
     return f"""You are OlivIA (VALHALLAI). Product: {description} | Markets: {markets_str}. 
     Mission: List regulatory requirements strictly in English. Translate all headers to English.
     Format: Markdown tables. Be professional and concise."""
 
 def create_eva_prompt(context, doc_text):
-    # Langue retirée des arguments, fixée à "English"
     return f"""You are EVA (VALHALLAI). Context: {context}. Doc: '''{doc_text[:6000]}'''. 
     Mission: Verify compliance in English. Start with ✅/⚠️/❌."""
 
@@ -240,7 +238,7 @@ def apply_theme():
 # 7. PAGES
 # =============================================================================
 def page_admin():
-    st.title("⚙️ Admin Console (Google Sheets DB)")
+    st.title("⚙️ Admin Console")
     st.markdown("---")
     
     if not st.session_state["admin_authenticated"]:
@@ -248,24 +246,43 @@ def page_admin():
         st.text_input("Admin Password", type="password", key="admin_pass_input", on_change=check_admin_password)
         return
     
+    # 1. Connection Status & Refresh
     sheet = get_gsheet_connection()
-    if not sheet:
-        st.error("❌ Erreur : Impossible de se connecter au Google Sheet. Vérifiez les secrets.")
-        return
-
-    st.success(f"✅ Connecté à la base de données : {sheet.title}")
+    col_status, col_refresh = st.columns([3, 1])
     
-    current_markets = get_markets()
+    with col_status:
+        if sheet:
+            st.success(f"✅ Database Connected: {sheet.title}")
+        else:
+            st.error("❌ Connection Failed. Check Secrets.")
+            
+    with col_refresh:
+        # Bouton pour forcer la synchro
+        if st.button("🔄 Force Refresh"):
+            st.cache_data.clear()
+            st.rerun()
+
+    # 2. Get Data
+    current_markets, is_live = get_markets()
+    
+    if not is_live:
+        st.warning("🟠 Showing Default/Offline List (Connection Issue)")
+    else:
+        st.info("🟢 Source: Live Database")
+
+    # 3. Add Market Form
+    st.markdown("#### Add New Market")
     with st.form("add_form", clear_on_submit=True):
         col1, col2 = st.columns([3, 1])
-        new = col1.text_input("Nouveau Marché")
-        if col2.form_submit_button("Ajouter"):
+        new = col1.text_input("Market Name", placeholder="e.g. Japan (PMDA)")
+        if col2.form_submit_button("Add"):
             if new and add_market(new):
-                st.success(f"Ajouté : {new}"); st.rerun()
+                st.success(f"Added: {new}"); st.rerun()
             else:
-                st.error("Erreur ou doublon")
+                st.error("Error or Duplicate")
 
-    st.markdown("### Marchés Actifs")
+    # 4. List Markets
+    st.markdown("#### Active Markets")
     for i, m in enumerate(current_markets):
         c1, c2, c3 = st.columns([4, 1, 1])
         if st.session_state.get("editing_market_index") != i:
@@ -285,15 +302,16 @@ def page_admin():
 def page_olivia():
     agent = config.AGENTS["olivia"]
     st.title(f"{agent['icon']} {agent['name']} Workspace")
-    available_markets = get_markets()
+    
+    # Récupération des marchés (on ne prend que la liste, pas le booléen)
+    available_markets, _ = get_markets()
     
     col1, col2 = st.columns([2, 1])
     with col1: desc = st.text_area("Product Definition", height=200, placeholder="Ex: Medical device class IIa...")
     with col2:
         countries = st.multiselect("Target Markets", available_markets, default=[available_markets[0]] if available_markets else None)
-        # Langue supprimée ici (on force l'Anglais en backend)
         
-        st.write("") # Spacer
+        st.write("")
         if st.button("Generate Report", type="primary"):
             client = get_openai_client()
             if client and desc:
@@ -301,7 +319,6 @@ def page_olivia():
                     try:
                         res = client.chat.completions.create(
                             model=config.OPENAI_MODEL,
-                            # Appel sans le paramètre langue
                             messages=[{"role": "user", "content": create_olivia_prompt(desc, countries)}],
                             temperature=config.OPENAI_TEMPERATURE
                         )
@@ -316,7 +333,6 @@ def page_olivia():
         
         st.markdown("---")
         
-        # Bouton export PDF en bas
         timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
         file_name = f"VALHALLAI_Report_{timestamp}.pdf"
         
@@ -349,7 +365,6 @@ def page_eva():
     st.title("EVA Workspace")
     ctx = st.text_area("Context", value=st.session_state.get("last_olivia_report", ""))
     up = st.file_uploader("PDF", type="pdf")
-    # Langue supprimée ici aussi
     
     if st.button("Run Audit", type="primary"):
         client = get_openai_client()
@@ -359,7 +374,6 @@ def page_eva():
                 try:
                     res = client.chat.completions.create(
                         model="gpt-4o", 
-                        # Appel sans le paramètre langue
                         messages=[{"role":"user","content":create_eva_prompt(ctx,txt)}], 
                         temperature=config.OPENAI_TEMPERATURE
                     )
@@ -372,7 +386,6 @@ def page_eva():
         
         st.markdown("---")
         
-        # Bouton export PDF en bas
         timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
         file_name = f"VALHALLAI_Audit_{timestamp}.pdf"
         
