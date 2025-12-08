@@ -1,6 +1,7 @@
 """
 VALHALLAI - Regulatory Intelligence Platform
 Application principale Streamlit
+Version 2.0 - Admin amélioré
 """
 
 import streamlit as st
@@ -34,7 +35,8 @@ def init_session_state():
         "current_page": "Dashboard",
         "dark_mode": False,
         "last_olivia_report": None,
-        "custom_markets": [],  # Marchés ajoutés par l'admin (temporaires)
+        "markets_list": None,  # None = utiliser config.DEFAULT_MARKETS
+        "editing_market_index": None,  # Index du marché en cours d'édition
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -43,7 +45,56 @@ def init_session_state():
 init_session_state()
 
 # =============================================================================
-# 3. FONCTIONS UTILITAIRES
+# 3. GESTION DES MARCHÉS
+# =============================================================================
+def get_markets():
+    """Retourne la liste des marchés (modifiée ou par défaut)."""
+    if st.session_state["markets_list"] is not None:
+        return st.session_state["markets_list"]
+    return config.DEFAULT_MARKETS.copy()
+
+def set_markets(markets_list):
+    """Sauvegarde la liste des marchés dans la session."""
+    st.session_state["markets_list"] = markets_list
+
+def reset_markets():
+    """Réinitialise aux marchés par défaut."""
+    st.session_state["markets_list"] = None
+    st.session_state["editing_market_index"] = None
+
+def add_market(market_name):
+    """Ajoute un marché à la liste."""
+    markets = get_markets()
+    if market_name not in markets:
+        markets.append(market_name)
+        set_markets(markets)
+        return True
+    return False
+
+def remove_market(index):
+    """Supprime un marché par son index."""
+    markets = get_markets()
+    if 0 <= index < len(markets):
+        markets.pop(index)
+        set_markets(markets)
+
+def update_market(index, new_name):
+    """Modifie le nom d'un marché."""
+    markets = get_markets()
+    if 0 <= index < len(markets):
+        markets[index] = new_name
+        set_markets(markets)
+
+def move_market(index, direction):
+    """Déplace un marché vers le haut (-1) ou le bas (+1)."""
+    markets = get_markets()
+    new_index = index + direction
+    if 0 <= new_index < len(markets):
+        markets[index], markets[new_index] = markets[new_index], markets[index]
+        set_markets(markets)
+
+# =============================================================================
+# 4. FONCTIONS UTILITAIRES
 # =============================================================================
 def navigate_to(page_name):
     """Change de page et rafraîchit."""
@@ -61,14 +112,6 @@ def get_openai_client():
         return OpenAI(api_key=api_key)
     return None
 
-def get_all_markets():
-    """Retourne tous les marchés (par défaut + personnalisés)."""
-    all_markets = config.DEFAULT_MARKETS.copy()
-    for market in st.session_state.get("custom_markets", []):
-        if market not in all_markets:
-            all_markets.append(market)
-    return all_markets
-
 def extract_text_from_pdf(file_bytes):
     """Extrait le texte d'un fichier PDF."""
     try:
@@ -83,13 +126,12 @@ def extract_text_from_pdf(file_bytes):
         return f"{config.ERRORS['pdf_error']} Détail: {str(e)}"
 
 # =============================================================================
-# 4. AUTHENTIFICATION
+# 5. AUTHENTIFICATION
 # =============================================================================
 def check_password():
     """Vérifie le mot de passe principal."""
     correct_token = st.secrets.get("APP_TOKEN")
     
-    # Si pas de token configuré, accès libre (dev mode)
     if not correct_token:
         st.session_state["authenticated"] = True
         return
@@ -97,7 +139,6 @@ def check_password():
     user_input = st.session_state.get("password_input", "")
     if user_input == correct_token:
         st.session_state["authenticated"] = True
-        # Nettoyer le champ de mot de passe
         if "password_input" in st.session_state:
             del st.session_state["password_input"]
     else:
@@ -107,7 +148,6 @@ def check_admin_password():
     """Vérifie le mot de passe admin."""
     admin_token = st.secrets.get("ADMIN_TOKEN")
     
-    # Sécurité : pas de token par défaut
     if not admin_token:
         st.error(config.ERRORS["no_admin_token"])
         return
@@ -128,7 +168,7 @@ def logout():
     st.session_state["last_olivia_report"] = None
 
 # =============================================================================
-# 5. PROMPTS IA
+# 6. PROMPTS IA
 # =============================================================================
 def create_olivia_prompt(description, countries, output_lang):
     """Génère le prompt pour OlivIA."""
@@ -161,7 +201,6 @@ Be precise, practical, and actionable."""
 
 def create_eva_prompt(context, doc_text, output_lang):
     """Génère le prompt pour EVA."""
-    # Limiter le texte pour éviter de dépasser les limites
     max_chars = 6000
     truncated_text = doc_text[:max_chars]
     if len(doc_text) > max_chars:
@@ -199,7 +238,7 @@ OUTPUT REQUIREMENTS:
 Be thorough but concise."""
 
 # =============================================================================
-# 6. ASSETS VISUELS
+# 7. ASSETS VISUELS
 # =============================================================================
 def get_logo_svg():
     """Génère le logo SVG."""
@@ -225,7 +264,7 @@ def get_logo_html():
     return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 15px;">'
 
 # =============================================================================
-# 7. THÈME CSS
+# 8. THÈME CSS
 # =============================================================================
 def apply_theme():
     """Applique le thème CSS selon le mode."""
@@ -234,33 +273,27 @@ def apply_theme():
     
     css = f"""
     <style>
-    /* Fonts */
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
     
-    /* Base */
     .stApp {{
         background-color: {c['background']};
         font-family: 'Inter', sans-serif;
         color: {c['text']};
     }}
     
-    /* Header */
     header[data-testid="stHeader"] {{
         background: transparent;
     }}
     
-    /* Hide Streamlit branding */
     .stDeployButton, #MainMenu, footer {{
         display: none;
     }}
     
-    /* Headings */
     h1, h2, h3 {{
         font-family: 'Montserrat', sans-serif !important;
         color: {c['primary']} !important;
     }}
     
-    /* Text */
     p, li, .stMarkdown {{
         color: {c['text']};
     }}
@@ -270,7 +303,6 @@ def apply_theme():
         font-size: 0.9rem;
     }}
     
-    /* Logo */
     .logo-text {{
         font-family: 'Montserrat', sans-serif;
         font-weight: 700;
@@ -286,13 +318,11 @@ def apply_theme():
         font-weight: 500;
     }}
     
-    /* Sidebar */
     section[data-testid="stSidebar"] {{
         background-color: {c['card']};
         border-right: 1px solid {c['border']};
     }}
     
-    /* Inputs */
     .stTextInput > div > div > input,
     .stTextArea > div > div > textarea,
     .stSelectbox > div > div > div {{
@@ -302,7 +332,6 @@ def apply_theme():
         border-radius: 8px;
     }}
     
-    /* Buttons */
     div.stButton > button:first-child {{
         background-color: {c['primary']} !important;
         color: {c['button_text']} !important;
@@ -318,7 +347,6 @@ def apply_theme():
         transform: translateY(-1px);
     }}
     
-    /* Cards */
     .info-card {{
         background-color: {c['card']};
         padding: 2rem;
@@ -332,23 +360,29 @@ def apply_theme():
         box-shadow: 0 4px 12px rgba(0,0,0,0.1);
     }}
     
-    /* Success messages */
     .stSuccess {{
         background-color: {c['card']};
         border-left: 4px solid {c['primary']};
     }}
     
-    /* Radio buttons in sidebar */
     div[role="radiogroup"] label {{
         color: {c['text_secondary']};
         font-weight: 500;
+    }}
+    
+    .market-item {{
+        background-color: {c['card']};
+        padding: 0.75rem 1rem;
+        border-radius: 8px;
+        border: 1px solid {c['border']};
+        margin-bottom: 0.5rem;
     }}
     </style>
     """
     st.markdown(css, unsafe_allow_html=True)
 
 # =============================================================================
-# 8. PAGES
+# 9. PAGES
 # =============================================================================
 def page_dashboard():
     """Page d'accueil / Dashboard."""
@@ -358,7 +392,6 @@ def page_dashboard():
     
     col1, col2 = st.columns(2)
     
-    # Card OlivIA
     with col1:
         agent = config.AGENTS["olivia"]
         st.markdown(f"""
@@ -371,7 +404,6 @@ def page_dashboard():
         if st.button(f"Launch {agent['name']} Analysis →", key="btn_olivia"):
             navigate_to("OlivIA")
     
-    # Card EVA
     with col2:
         agent = config.AGENTS["eva"]
         st.markdown(f"""
@@ -384,12 +416,11 @@ def page_dashboard():
         if st.button(f"Launch {agent['name']} Audit →", key="btn_eva"):
             navigate_to("EVA")
     
-    # Stats (optionnel)
     st.markdown("---")
     st.markdown("### 📊 Quick Stats")
     stat_col1, stat_col2, stat_col3 = st.columns(3)
     with stat_col1:
-        st.metric("Available Markets", len(get_all_markets()))
+        st.metric("Available Markets", len(get_markets()))
     with stat_col2:
         st.metric("Languages", len(config.AVAILABLE_LANGUAGES))
     with stat_col3:
@@ -403,16 +434,13 @@ def page_olivia():
     st.markdown(f"<span class='sub-text'>{agent['description']}</span>", unsafe_allow_html=True)
     st.markdown("---")
     
-    # Vérifier la clé API
     client = get_openai_client()
     if not client:
         st.error(config.ERRORS["no_api_key"])
         return
     
-    # Récupérer les marchés
-    available_markets = get_all_markets()
+    available_markets = get_markets()
     
-    # Interface
     col1, col2 = st.columns([2, 1])
     
     with col1:
@@ -439,7 +467,6 @@ def page_olivia():
         st.write("")
         generate_btn = st.button("🚀 Generate Report", type="primary", use_container_width=True)
     
-    # Génération du rapport
     if generate_btn:
         if not description.strip():
             st.warning("⚠️ Please enter a product description.")
@@ -459,19 +486,16 @@ def page_olivia():
                 except Exception as e:
                     st.error(f"{config.ERRORS['api_error']} Détail: {str(e)}")
     
-    # Affichage du rapport
     if st.session_state.get("last_olivia_report"):
         st.markdown("---")
         st.success("✅ Analysis Generated Successfully")
         
-        # Bouton pour copier dans EVA
         if st.button("📋 Use this report in EVA →"):
             navigate_to("EVA")
         
         st.markdown("### 📄 Regulatory Analysis Report")
         st.markdown(st.session_state["last_olivia_report"])
         
-        # Bouton pour effacer
         if st.button("🗑️ Clear Report"):
             st.session_state["last_olivia_report"] = None
             st.rerun()
@@ -483,13 +507,11 @@ def page_eva():
     st.markdown(f"<span class='sub-text'>{agent['description']}</span>", unsafe_allow_html=True)
     st.markdown("---")
     
-    # Vérifier la clé API
     client = get_openai_client()
     if not client:
         st.error(config.ERRORS["no_api_key"])
         return
     
-    # Contexte réglementaire
     default_context = st.session_state.get("last_olivia_report", "")
     has_olivia_report = bool(default_context)
     
@@ -503,7 +525,6 @@ def page_eva():
             placeholder="Paste regulatory requirements here, or generate them with OlivIA first."
         )
     
-    # Upload et configuration
     col1, col2 = st.columns([2, 1])
     
     with col1:
@@ -526,7 +547,6 @@ def page_eva():
         st.write("")
         audit_btn = st.button("🔍 Run Compliance Audit", type="primary", use_container_width=True)
     
-    # Exécution de l'audit
     if audit_btn:
         if not context.strip():
             st.warning("⚠️ Please provide regulatory context.")
@@ -535,14 +555,12 @@ def page_eva():
         else:
             with st.spinner("🔄 Auditing document..."):
                 try:
-                    # Extraire le texte du PDF
                     doc_text = extract_text_from_pdf(uploaded_file.read())
                     
                     if doc_text.startswith("❌"):
                         st.error(doc_text)
                         return
                     
-                    # Générer l'audit
                     prompt = create_eva_prompt(context, doc_text, audit_lang)
                     response = client.chat.completions.create(
                         model=config.OPENAI_MODEL,
@@ -550,7 +568,6 @@ def page_eva():
                         temperature=config.OPENAI_TEMPERATURE
                     )
                     
-                    # Afficher les résultats
                     st.markdown("---")
                     st.markdown("### 📊 Audit Results")
                     st.markdown(response.choices[0].message.content)
@@ -559,7 +576,7 @@ def page_eva():
                     st.error(f"{config.ERRORS['api_error']} Détail: {str(e)}")
 
 def page_admin():
-    """Page Admin - Gestion."""
+    """Page Admin - Gestion complète des marchés."""
     st.title("⚙️ Admin Console")
     st.markdown("---")
     
@@ -575,64 +592,160 @@ def page_admin():
         st.info("💡 Enter admin password to access management features.")
         return
     
-    # Interface admin
     st.success("✅ Admin access granted")
     
-    # Section: Gestion des marchés
+    # ===========================================
+    # SECTION: Gestion des marchés
+    # ===========================================
     st.markdown("### 🌍 Market Management")
-    st.info("ℹ️ Custom markets are stored in session. For permanent changes, edit `config.py`.")
     
-    current_markets = get_all_markets()
-    custom_markets = st.session_state.get("custom_markets", [])
+    # Avertissement sur la persistance
+    is_modified = st.session_state["markets_list"] is not None
+    if is_modified:
+        st.warning("⚠️ You have unsaved changes. These will be lost if the app restarts. See 'Export' section below to save permanently.")
     
-    # Ajouter un marché
-    with st.form("add_market_form"):
-        col1, col2 = st.columns([3, 1])
-        with col1:
+    current_markets = get_markets()
+    
+    # --- Formulaire d'ajout ---
+    st.markdown("#### ➕ Add New Market")
+    with st.form("add_market_form", clear_on_submit=True):
+        col_input, col_btn = st.columns([3, 1])
+        with col_input:
             new_market = st.text_input(
-                "Add New Market",
-                placeholder="Example: India (CDSCO)"
+                "Market name",
+                placeholder="Example: India (CDSCO)",
+                label_visibility="collapsed"
             )
-        with col2:
-            st.write("")
-            submitted = st.form_submit_button("➕ Add", use_container_width=True)
+        with col_btn:
+            add_submitted = st.form_submit_button("Add", use_container_width=True)
         
-        if submitted:
+        if add_submitted and new_market:
             new_market = new_market.strip()
-            if not new_market:
-                st.warning("⚠️ Please enter a market name.")
-            elif len(new_market) < 2:
-                st.warning("⚠️ Name too short (minimum 2 characters).")
+            if len(new_market) < 2:
+                st.error("❌ Name too short (min 2 characters)")
             elif new_market in current_markets:
-                st.warning("⚠️ This market already exists.")
+                st.error("❌ This market already exists")
             else:
-                st.session_state["custom_markets"].append(new_market)
+                add_market(new_market)
                 st.success(f"✅ Added: {new_market}")
                 st.rerun()
     
-    # Liste des marchés
-    st.markdown("### 📋 Active Markets")
+    # --- Liste des marchés ---
+    st.markdown("#### 📋 Current Markets")
+    st.caption(f"Total: {len(current_markets)} markets")
     
-    col_default, col_custom = st.columns(2)
-    
-    with col_default:
-        st.markdown("**Default Markets** (from config.py)")
-        for market in config.DEFAULT_MARKETS:
-            st.info(f"🌍 {market}")
-    
-    with col_custom:
-        st.markdown("**Custom Markets** (session only)")
-        if custom_markets:
-            for i, market in enumerate(custom_markets):
-                col_name, col_del = st.columns([3, 1])
-                col_name.success(f"✨ {market}")
-                if col_del.button("🗑️", key=f"del_{i}"):
-                    st.session_state["custom_markets"].pop(i)
+    if not current_markets:
+        st.info("No markets configured. Add one above!")
+    else:
+        for i, market in enumerate(current_markets):
+            # Vérifier si on est en mode édition pour ce marché
+            is_editing = st.session_state.get("editing_market_index") == i
+            
+            col_num, col_name, col_up, col_down, col_edit, col_del = st.columns([0.5, 3, 0.5, 0.5, 0.7, 0.7])
+            
+            with col_num:
+                st.markdown(f"**{i+1}.**")
+            
+            with col_name:
+                if is_editing:
+                    # Mode édition
+                    new_name = st.text_input(
+                        "Edit name",
+                        value=market,
+                        key=f"edit_input_{i}",
+                        label_visibility="collapsed"
+                    )
+                else:
+                    st.markdown(f"🌍 {market}")
+            
+            with col_up:
+                # Bouton monter (désactivé si premier)
+                if i > 0:
+                    if st.button("⬆️", key=f"up_{i}", help="Move up"):
+                        move_market(i, -1)
+                        st.rerun()
+                else:
+                    st.write("")  # Placeholder
+            
+            with col_down:
+                # Bouton descendre (désactivé si dernier)
+                if i < len(current_markets) - 1:
+                    if st.button("⬇️", key=f"down_{i}", help="Move down"):
+                        move_market(i, 1)
+                        st.rerun()
+                else:
+                    st.write("")  # Placeholder
+            
+            with col_edit:
+                if is_editing:
+                    # Bouton sauvegarder
+                    if st.button("💾", key=f"save_{i}", help="Save"):
+                        new_name = st.session_state.get(f"edit_input_{i}", market).strip()
+                        if new_name and new_name != market:
+                            if new_name in current_markets and new_name != market:
+                                st.error("Name already exists!")
+                            else:
+                                update_market(i, new_name)
+                                st.session_state["editing_market_index"] = None
+                                st.rerun()
+                        else:
+                            st.session_state["editing_market_index"] = None
+                            st.rerun()
+                else:
+                    # Bouton éditer
+                    if st.button("✏️", key=f"edit_{i}", help="Edit"):
+                        st.session_state["editing_market_index"] = i
+                        st.rerun()
+            
+            with col_del:
+                # Bouton supprimer
+                if st.button("🗑️", key=f"del_{i}", help="Delete"):
+                    remove_market(i)
+                    st.session_state["editing_market_index"] = None
                     st.rerun()
-        else:
-            st.caption("No custom markets added yet.")
     
-    # Section: Infos système
+    # --- Actions globales ---
+    st.markdown("---")
+    st.markdown("#### 🔄 Global Actions")
+    
+    col_reset, col_export = st.columns(2)
+    
+    with col_reset:
+        if st.button("🔄 Reset to Default", use_container_width=True):
+            reset_markets()
+            st.success("✅ Markets reset to default values")
+            st.rerun()
+    
+    with col_export:
+        if st.button("📤 Show Export Code", use_container_width=True):
+            st.session_state["show_export"] = not st.session_state.get("show_export", False)
+            st.rerun()
+    
+    # --- Zone d'export ---
+    if st.session_state.get("show_export", False):
+        st.markdown("---")
+        st.markdown("#### 📤 Export for Permanent Save")
+        st.info("👇 Copy this code and paste it in your `config.py` file on GitHub to make changes permanent.")
+        
+        # Générer le code Python
+        markets_code = "DEFAULT_MARKETS = [\n"
+        for market in current_markets:
+            markets_code += f'    "{market}",\n'
+        markets_code += "]"
+        
+        st.code(markets_code, language="python")
+        
+        st.markdown("""
+        **How to update config.py on GitHub:**
+        1. Go to your GitHub repository
+        2. Click on `config.py`
+        3. Click the ✏️ pencil icon to edit
+        4. Find `DEFAULT_MARKETS = [...]`
+        5. Replace it with the code above
+        6. Click "Commit changes"
+        """)
+    
+    # --- Infos système ---
     st.markdown("---")
     st.markdown("### ℹ️ System Information")
     
@@ -642,21 +755,20 @@ def page_admin():
         st.markdown(f"**API Key:** `{'✅ Configured' if get_api_key() else '❌ Missing'}`")
     with info_col2:
         st.markdown(f"**Total Markets:** {len(current_markets)}")
-        st.markdown(f"**Languages:** {len(config.AVAILABLE_LANGUAGES)}")
+        st.markdown(f"**Modified:** {'⚠️ Yes' if is_modified else '✅ No (using defaults)'}")
     
     # Déconnexion admin
     st.markdown("---")
-    if st.button("🚪 Logout Admin"):
+    if st.button("🚪 Logout Admin", use_container_width=True):
         st.session_state["admin_authenticated"] = False
         st.rerun()
 
 # =============================================================================
-# 9. APPLICATION PRINCIPALE
+# 10. APPLICATION PRINCIPALE
 # =============================================================================
 def render_sidebar():
     """Affiche la sidebar avec navigation."""
     with st.sidebar:
-        # Logo
         logo_html = get_logo_html()
         st.markdown(f"""
         <div style="display: flex; align-items: center; margin-bottom: 1rem;">
@@ -670,7 +782,6 @@ def render_sidebar():
         
         st.markdown("---")
         
-        # Navigation
         pages = ["Dashboard", "OlivIA", "EVA", "Admin"]
         current = st.session_state["current_page"]
         
@@ -686,7 +797,6 @@ def render_sidebar():
         
         st.markdown("---")
         
-        # Dark mode toggle
         dark_mode = st.checkbox(
             "🌙 Night Mode",
             value=st.session_state["dark_mode"]
@@ -697,7 +807,6 @@ def render_sidebar():
         
         st.markdown("---")
         
-        # Logout
         if st.button("🚪 Log Out", use_container_width=True):
             logout()
             st.rerun()
@@ -709,13 +818,11 @@ def render_login():
     with col2:
         st.markdown("<br><br><br>", unsafe_allow_html=True)
         
-        # Logo centré
         st.markdown(
             f"<div style='text-align: center;'>{get_logo_html()}</div>",
             unsafe_allow_html=True
         )
         
-        # Titre
         st.markdown(
             f"<h1 style='text-align: center; color: #295A63;'>{config.APP_NAME}</h1>",
             unsafe_allow_html=True
@@ -727,7 +834,6 @@ def render_login():
         
         st.markdown("<br>", unsafe_allow_html=True)
         
-        # Champ de mot de passe
         st.text_input(
             "🔐 Security Token",
             type="password",
@@ -741,15 +847,11 @@ def render_login():
 
 def main():
     """Point d'entrée principal."""
-    # Appliquer le thème
     apply_theme()
     
-    # Vérifier l'authentification
     if st.session_state["authenticated"]:
-        # Afficher la sidebar
         render_sidebar()
         
-        # Router vers la bonne page
         page = st.session_state["current_page"]
         
         if page == "Dashboard":
@@ -763,9 +865,7 @@ def main():
         else:
             page_dashboard()
     else:
-        # Page de connexion
         render_login()
 
-# Lancement
 if __name__ == "__main__":
     main()
