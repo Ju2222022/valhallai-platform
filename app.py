@@ -24,7 +24,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Configuration MIA
 if "mia" not in config.AGENTS:
     config.AGENTS["mia"] = {
         "name": "MIA",
@@ -32,7 +31,7 @@ if "mia" not in config.AGENTS:
         "description": "Market Intelligence Agent (Regulatory Watch & Monitoring)."
     }
 
-# Liste de secours
+# LISTE DE SECOURS (FALLBACK)
 DEFAULT_DOMAINS = [
     "eur-lex.europa.eu", "europa.eu", "echa.europa.eu", "cenelec.eu", 
     "single-market-economy.ec.europa.eu",
@@ -65,7 +64,7 @@ def init_session_state():
 init_session_state()
 
 # =============================================================================
-# 2. GESTION DES DONNÉES (GOOGLE SHEETS)
+# 2. GESTION DES DONNÉES (GOOGLE SHEETS - SÉCURISÉE)
 # =============================================================================
 @st.cache_resource
 def get_gsheet_workbook():
@@ -99,11 +98,19 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
         try: log_sheet = wb.worksheet("Logs")
         except: log_sheet = wb.add_worksheet(title="Logs", rows=1000, cols=6)
         
+        # Réparation automatique des headers si la feuille est vide
         if not log_sheet.cell(1, 1).value:
             log_sheet.update("A1:F1", [["Date", "Time", "Report ID", "Type", "Details", "Metrics"]])
             
         now = datetime.now()
-        log_sheet.append_row([now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), report_id, report_type, details, extra_metrics])
+        log_sheet.append_row([
+            now.strftime("%Y-%m-%d"), 
+            now.strftime("%H:%M:%S"), 
+            report_id, 
+            report_type, 
+            details, 
+            extra_metrics
+        ])
     except: pass
 
 # --- HELPERS BDD ---
@@ -170,6 +177,10 @@ def update_domain(idx, name):
 # =============================================================================
 # 4. API & SEARCH & CACHING
 # =============================================================================
+def navigate_to(page):
+    st.session_state["current_page"] = page
+    st.rerun()
+
 def get_api_key():
     return st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
 
@@ -263,9 +274,9 @@ def get_logo_html():
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
     return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 15px;">'
 
-# --- THEME STABLE (CSS MINIMAL) ---
+# --- THEME STABLE (SANS HACKS CSS) ---
 def apply_theme():
-    # CSS minimaliste pour éviter les conflits
+    # CSS minimaliste et sûr
     st.markdown("""
     <style>
     /* Carte Info */
@@ -273,7 +284,7 @@ def apply_theme():
         padding: 2rem; border-radius: 12px; border: 1px solid #E2E8F0; 
         min-height: 220px; display: flex; flex-direction: column; justify-content: flex-start;
     }
-    /* Boutons Primaires */
+    /* Boutons Primaires (Vert Valhallai) */
     div.stButton > button:first-child { 
         background-color: #295A63 !important; color: white !important; 
         border-radius: 8px; font-weight: 600; width: 100%; border: none;
@@ -340,7 +351,7 @@ def page_mia():
                     if json_str:
                         st.session_state["last_mia_results"] = json.loads(json_str)
                         log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
-                        # PAS DE RERUN ICI - On laisse Streamlit recharger naturellement
+                        st.rerun()
                     else: st.error("Analysis failed.")
 
     results = st.session_state.get("last_mia_results")
@@ -405,7 +416,7 @@ def page_olivia():
                 new_id = str(uuid.uuid4())
                 st.session_state["last_olivia_id"] = new_id
                 log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)}")
-                # PAS DE RERUN - Laisser Streamlit faire
+                st.rerun()
             except Exception as e: st.error(str(e))
 
     if st.session_state["last_olivia_report"]:
@@ -431,7 +442,7 @@ def page_eva():
                 st.session_state["last_eva_report"] = resp
                 st.session_state["last_eva_id"] = str(uuid.uuid4())
                 log_usage("EVA", st.session_state["last_eva_id"], f"File: {up.name}")
-                # PAS DE RERUN
+                st.rerun()
             except Exception as e: st.error(str(e))
     
     if st.session_state.get("last_eva_report"):
@@ -450,13 +461,13 @@ def page_dashboard():
     st.markdown("###")
     c1, c2, c3 = st.columns(3)
     
-    # NAVIGATION SIMPLE VIA SESSION STATE (Pas de on_click)
+    # NAVIGATION SIMPLE
     with c1: 
         st.markdown(f"""<div class="info-card"><h3>🤖 OlivIA</h3><p class='sub-text'>{config.AGENTS['olivia']['description']}</p></div>""", unsafe_allow_html=True)
         st.write("")
         if st.button("Launch OlivIA ->"): 
             st.session_state["current_page"] = "OlivIA"
-            st.rerun() # Rerun légitime ici (changement de page)
+            st.rerun()
     with c2: 
         st.markdown(f"""<div class="info-card"><h3>🔍 EVA</h3><p class='sub-text'>{config.AGENTS['eva']['description']}</p></div>""", unsafe_allow_html=True)
         st.write("")
@@ -472,8 +483,8 @@ def page_dashboard():
 
 def render_sidebar():
     with st.sidebar:
-        # BOUTON SIMPLE "HOME" (Plus de bouton fantôme)
-        if st.button("🏠 Dashboard", use_container_width=True):
+        # NAVIGATION STANDARD (Pas de boutons fantômes)
+        if st.button("🏠 Home", use_container_width=True):
              st.session_state["current_page"] = "Dashboard"
              st.rerun()
 
@@ -484,13 +495,9 @@ def render_sidebar():
         pages = ["Dashboard", "OlivIA", "EVA", "MIA", "Admin"]
         curr = st.session_state["current_page"]
         
-        # Navigation standard (plus de callbacks)
-        # Si la page actuelle n'est pas dans la liste, on reset
         idx = pages.index(curr) if curr in pages else 0
-        
         selected = st.radio("NAV", pages, index=idx, label_visibility="collapsed")
         
-        # Détection du changement
         if selected != curr:
             st.session_state["current_page"] = selected
             st.rerun()
