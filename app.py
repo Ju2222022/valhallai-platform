@@ -254,7 +254,7 @@ def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     {{
         "executive_summary": "Summary...",
         "items": [
-            {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["..."], "impact": "High/Medium/Low" }}
+            {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["..."], "impact": "High" (or "Medium", "Low") }}
         ]
     }}
     """
@@ -383,18 +383,28 @@ def page_mia():
         st.markdown("### 📋 Monitoring Report")
         st.info(f"**Executive Summary:** {results.get('executive_summary', 'No summary.')}")
         
-        # --- LÉGENDE AJOUTÉE ICI ---
-        st.caption("ℹ️ Impact Legend:")
-        l1, l2, l3 = st.columns(3)
-        l1.markdown("🔴 **High**: Critical / Mandatory")
-        l2.markdown("🟡 **Medium**: Important / Guidelines")
-        l3.markdown("🟢 **Low**: Informative / News")
-        # ---------------------------
+        # --- BLOC DE FILTRE ET LÉGENDE ---
+        c_filter, c_legend = st.columns([1, 2])
+        with c_filter:
+            selected_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"])
+        with c_legend:
+            st.caption("ℹ️ Impact Legend:")
+            l1, l2, l3 = st.columns(3)
+            l1.markdown("🔴 **High**: Critical")
+            l2.markdown("🟡 **Medium**: Important")
+            l3.markdown("🟢 **Low**: Info")
+        # ---------------------------------
         
         st.markdown("---")
+        
         items = results.get("items", [])
-        if not items: st.warning("No significant updates found.")
-        for item in items:
+        # Filtrage logique
+        filtered_items = [i for i in items if i.get('impact', 'Low').capitalize() in selected_impacts]
+        
+        if not filtered_items:
+            st.warning("No updates found matching your filters.")
+        
+        for item in filtered_items:
             impact = item.get('impact', 'Low').lower()
             if impact == 'high': icon = "🔴"
             elif impact == 'medium': icon = "🟡"
@@ -477,13 +487,16 @@ def page_dashboard():
     c1, c2, c3 = st.columns(3)
     with c1: 
         st.markdown(f"""<div class="info-card"><h3>🤖 OlivIA</h3><p class='sub-text'>{config.AGENTS['olivia']['description']}</p></div>""", unsafe_allow_html=True)
-        st.write(""); st.button("Launch OlivIA ->", on_click=navigate_to, args=("OlivIA",))
+        st.write("")
+        if st.button("Launch OlivIA ->"): navigate_to("OlivIA")
     with c2: 
         st.markdown(f"""<div class="info-card"><h3>🔍 EVA</h3><p class='sub-text'>{config.AGENTS['eva']['description']}</p></div>""", unsafe_allow_html=True)
-        st.write(""); st.button("Launch EVA ->", on_click=navigate_to, args=("EVA",))
+        st.write("")
+        if st.button("Launch EVA ->"): navigate_to("EVA")
     with c3: 
         st.markdown(f"""<div class="info-card"><h3>{config.AGENTS['mia']['icon']} {config.AGENTS['mia']['name']}</h3><p class='sub-text'>{config.AGENTS['mia']['description']}</p></div>""", unsafe_allow_html=True)
-        st.write(""); st.button("Launch MIA ->", on_click=navigate_to, args=("MIA",))
+        st.write("")
+        if st.button("Launch MIA ->"): navigate_to("MIA")
 
 def render_sidebar():
     with st.sidebar:
