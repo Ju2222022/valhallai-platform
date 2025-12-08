@@ -14,7 +14,7 @@ import config
 from utils_pdf import generate_pdf_report
 
 # =============================================================================
-# 1. CONFIGURATION STREAMLIT
+# 0. CONSTANTES & CONFIG
 # =============================================================================
 st.set_page_config(
     page_title=config.APP_NAME,
@@ -23,8 +23,18 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Liste de secours
+DEFAULT_DOMAINS = [
+    "eur-lex.europa.eu",
+    "europa.eu",
+    "fda.gov",
+    "iso.org",
+    "gov.uk",
+    "reuters.com"
+]
+
 # =============================================================================
-# 2. INITIALISATION DU SESSION STATE
+# 1. INITIALISATION DU SESSION STATE
 # =============================================================================
 def init_session_state():
     defaults = {
@@ -37,6 +47,7 @@ def init_session_state():
         "last_eva_report": None,
         "last_eva_id": None,
         "editing_market_index": None,
+        "editing_domain_index": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -45,7 +56,7 @@ def init_session_state():
 init_session_state()
 
 # =============================================================================
-# 3. GESTION DES DONNÉES (GOOGLE SHEETS)
+# 2. GESTION DES DONNÉES (GOOGLE SHEETS)
 # =============================================================================
 @st.cache_resource
 def get_gsheet_workbook():
@@ -84,24 +95,13 @@ def get_gsheet_workbook():
         st.error(f"❌ Google Sheets Connection Error: {e}")
         return None
 
-def get_markets_sheet():
-    wb = get_gsheet_workbook()
-    return wb.sheet1 if wb else None
-
 def log_usage(report_type, report_id, details="", extra_metrics=""):
-    """
-    Enregistre l'activité dans l'onglet 'Logs'.
-    - details (Col E) : Description produit ou nom fichier
-    - extra_metrics (Col F) : Nombre de marchés, Web Search utilisé, etc.
-    """
     wb = get_gsheet_workbook()
     if not wb: return
-
     try:
         try:
             log_sheet = wb.worksheet("Logs")
         except:
-            # Création si inexistant
             log_sheet = wb.add_worksheet(title="Logs", rows=1000, cols=6)
             log_sheet.append_row(["Date", "Time", "Report ID", "Type", "Details", "Metrics"])
 
@@ -111,54 +111,99 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
             now.strftime("%H:%M:%S"),
             report_id,
             report_type,
-            details,        # Col E
-            extra_metrics   # Col F
+            details,
+            extra_metrics
         ]
         log_sheet.append_row(row)
-        
     except Exception as e:
         print(f"Logging failed: {e}")
 
+# --- GESTION DES MARCHÉS (Onglet Sheet1) ---
 def get_markets():
-    sheet = get_markets_sheet()
-    if sheet:
+    wb = get_gsheet_workbook()
+    if wb:
         try:
+            sheet = wb.sheet1
             vals = sheet.col_values(1)
             return (vals if vals else []), True
         except:
-            return config.DEFAULT_MARKETS, False
+            pass
     return config.DEFAULT_MARKETS, False
 
 def add_market(market_name):
-    sheet = get_markets_sheet()
-    if sheet:
+    wb = get_gsheet_workbook()
+    if wb:
         try:
+            sheet = wb.sheet1
             current = sheet.col_values(1)
             if market_name not in current:
                 sheet.append_row([market_name])
                 st.cache_data.clear()
                 return True
-        except Exception as e:
-            st.error(f"Write Error: {e}")
+        except Exception as e: st.error(f"Write Error: {e}")
     return False
 
 def remove_market(index):
-    sheet = get_markets_sheet()
-    if sheet:
+    wb = get_gsheet_workbook()
+    if wb:
         try:
+            sheet = wb.sheet1
             sheet.delete_rows(index + 1)
             st.cache_data.clear()
-        except Exception as e:
-            st.error(f"Delete Error: {e}")
+        except Exception as e: st.error(f"Delete Error: {e}")
 
 def update_market(index, new_name):
-    sheet = get_markets_sheet()
-    if sheet:
+    wb = get_gsheet_workbook()
+    if wb:
         try:
+            sheet = wb.sheet1
             sheet.update_cell(index + 1, 1, new_name)
             st.cache_data.clear()
-        except Exception as e:
-            st.error(f"Update Error: {e}")
+        except Exception as e: st.error(f"Update Error: {e}")
+
+# --- GESTION DES DOMAINES DEEP SEARCH (Onglet "Watch_domains") ---
+def get_domains():
+    wb = get_gsheet_workbook()
+    if wb:
+        try:
+            try:
+                # ICI : Changement du nom de l'onglet
+                sheet = wb.worksheet("Watch_domains")
+            except:
+                # Création automatique avec le nouveau nom
+                sheet = wb.add_worksheet(title="Watch_domains", rows=100, cols=1)
+                for d in DEFAULT_DOMAINS: sheet.append_row([d])
+                st.cache_data.clear()
+            
+            vals = sheet.col_values(1)
+            return (vals if vals else DEFAULT_DOMAINS), True
+        except:
+            pass
+    return DEFAULT_DOMAINS, False
+
+def add_domain(domain_name):
+    wb = get_gsheet_workbook()
+    if wb:
+        try:
+            # ICI : Changement du nom de l'onglet
+            sheet = wb.worksheet("Watch_domains")
+            current = sheet.col_values(1)
+            if domain_name not in current:
+                sheet.append_row([domain_name])
+                st.cache_data.clear()
+                return True
+        except Exception as e: st.error(f"Write Error: {e}")
+    return False
+
+def remove_domain(index):
+    wb = get_gsheet_workbook()
+    if wb:
+        try:
+            # ICI : Changement du nom de l'onglet
+            sheet = wb.worksheet("Watch_domains")
+            sheet.delete_rows(index + 1)
+            st.cache_data.clear()
+        except Exception as e: st.error(f"Delete Error: {e}")
 
 # =============================================================================
 # 4. FONCTIONS UTILITAIRES & DEEP SEARCH
@@ -177,7 +222,7 @@ def get_openai_client():
     return None
 
 def run_deep_search(query):
-    """Exécute une recherche web via Tavily (pour le RAG)."""
+    """Exécute une recherche web via Tavily en utilisant la liste dynamique."""
     try:
         tavily_key = st.secrets.get("TAVILY_API_KEY")
         if not tavily_key:
@@ -185,22 +230,14 @@ def run_deep_search(query):
             
         tavily = TavilyClient(api_key=tavily_key)
         
-        # Recherche contextuelle optimisée
+        # Récupération de la liste dynamique des domaines autorisés
+        authorized_domains, _ = get_domains()
+        
         response = tavily.search(
             query=query,
             search_depth="advanced",
             max_results=3,
-            # C'est ici qu'on définit le "Cercle de Confiance"
-            include_domains=[
-                "eur-lex.europa.eu",  # Droit officiel UE (le plus précis)
-                "europa.eu",          # Commission Européenne
-                "eur-lex.europa.eu",  # Journal official Européen
-                "echa.europa.eu",     # European CHemical Agency
-                "fda.gov",            # USA
-                "iso.org",            # Normes internationales
-                "gov.uk",             # Royaume-Uni
-                "reuters.com",        # Actualités fiables
-            ] 
+            include_domains=authorized_domains # Utilisation de la liste "Watch_domains"
         )
         
         context_text = "### LIVE REGULATORY DATA (FROM WEB):\n"
@@ -254,7 +291,7 @@ def logout():
     st.session_state["current_page"] = "Dashboard"
 
 # =============================================================================
-# 6. PROMPTS IA (EXPERT LEVEL)
+# 6. PROMPTS IA
 # =============================================================================
 def create_olivia_prompt(description, countries):
     markets_str = ", ".join(countries)
@@ -387,6 +424,8 @@ def page_admin():
         return
     
     wb = get_gsheet_workbook()
+    
+    # Header Status
     col_status, col_refresh = st.columns([3, 1])
     with col_status:
         if wb: st.success(f"✅ Database Connected: {wb.title}")
@@ -395,32 +434,46 @@ def page_admin():
         if st.button("🔄 Force Refresh"):
             st.cache_data.clear(); st.rerun()
 
-    current_markets, is_live = get_markets()
-    if not is_live: st.warning("🟠 Default List (Offline)")
-    else: st.info("🟢 Source: Live Database")
+    # TABS
+    tab_markets, tab_domains = st.tabs(["🌍 Markets Management", "🕵️‍♂️ Deep Search Sources"])
 
-    st.markdown("#### Add New Market")
-    with st.form("add_form", clear_on_submit=True):
-        col1, col2 = st.columns([3, 1])
-        new = col1.text_input("Market Name")
-        if col2.form_submit_button("Add"):
-            if new and add_market(new): st.success(f"Added: {new}"); st.rerun()
-            else: st.error("Error")
+    # --- TAB 1: MARCHÉS ---
+    with tab_markets:
+        current_markets, is_live_m = get_markets()
+        if not is_live_m: st.warning("🟠 Showing Default List (Offline)")
+        else: st.caption(f"Source: Live Database ({len(current_markets)} markets)")
 
-    st.markdown("#### Active Markets")
-    for i, m in enumerate(current_markets):
-        c1, c2, c3 = st.columns([4, 1, 1])
-        if st.session_state.get("editing_market_index") != i:
+        with st.form("add_market"):
+            c1, c2 = st.columns([3, 1])
+            new_m = c1.text_input("New Market Name")
+            if c2.form_submit_button("Add Market"):
+                if new_m and add_market(new_m): st.success(f"Added: {new_m}"); st.rerun()
+        
+        st.markdown("### Active Markets")
+        for i, m in enumerate(current_markets):
+            c1, c2 = st.columns([4, 1])
             c1.info(f"🌍 {m}")
-            if c2.button("✏️", key=f"ed_{i}"): st.session_state["editing_market_index"] = i; st.rerun()
-            if c3.button("🗑️", key=f"del_{i}"): remove_market(i); st.rerun()
-        else:
-            new_val = c1.text_input("Edit", value=m, key=f"val_{i}", label_visibility="collapsed")
-            if c2.button("💾", key=f"save_{i}"):
-                update_market(i, new_val)
-                st.session_state["editing_market_index"] = None; st.rerun()
-            if c3.button("❌", key=f"cancel_{i}"):
-                st.session_state["editing_market_index"] = None; st.rerun()
+            if c2.button("🗑️", key=f"del_m_{i}"): remove_market(i); st.rerun()
+
+    # --- TAB 2: DOMAINES DEEP SEARCH ---
+    with tab_domains:
+        current_domains, is_live_d = get_domains()
+        if not is_live_d: st.warning("🟠 Showing Default List (Offline)")
+        else: st.caption(f"Source: Live Database ({len(current_domains)} authorized domains)")
+        
+        st.info("💡 These are the only websites the AI is allowed to read for regulatory updates.")
+
+        with st.form("add_domain"):
+            c1, c2 = st.columns([3, 1])
+            new_d = c1.text_input("New Domain (e.g., ansm.sante.fr)")
+            if c2.form_submit_button("Add Domain"):
+                if new_d and add_domain(new_d): st.success(f"Added: {new_d}"); st.rerun()
+        
+        st.markdown("### Authorized Domains")
+        for i, d in enumerate(current_domains):
+            c1, c2 = st.columns([4, 1])
+            c1.success(f"🌐 {d}")
+            if c2.button("🗑️", key=f"del_d_{i}"): remove_domain(i); st.rerun()
 
 def page_olivia():
     agent = config.AGENTS["olivia"]
@@ -437,7 +490,7 @@ def page_olivia():
         if st.button("Generate Report", type="primary"):
             client = get_openai_client()
             if client and desc:
-                # 1. LOGIQUE HYBRIDE : DEEP SEARCH
+                # DEEP SEARCH ACTIVATION
                 target_regions = ["EU", "USA", "China", "UK"]
                 use_deep_search = any(r in str(countries) for r in target_regions)
                 deep_context = ""
@@ -446,18 +499,15 @@ def page_olivia():
                 
                 with st.spinner(status_msg):
                     try:
-                        # Etape A : Recherche Web (Tavily)
                         if use_deep_search:
                             search_q = f"Latest regulatory requirements standards for {desc} in {', '.join(countries)}"
                             web_data, error = run_deep_search(search_q)
                             if web_data: deep_context = web_data
                         
-                        # Etape B : Construction du Prompt Final
                         final_prompt = create_olivia_prompt(desc, countries)
                         if deep_context:
                             final_prompt += f"\n\n[IMPORTANT] USE THIS REAL-TIME WEB DATA TO CITE REGULATIONS:\n{deep_context}"
 
-                        # Etape C : Appel GPT-4o
                         res = client.chat.completions.create(
                             model=config.OPENAI_MODEL,
                             messages=[{"role": "user", "content": final_prompt}],
@@ -465,7 +515,6 @@ def page_olivia():
                         )
                         st.session_state["last_olivia_report"] = res.choices[0].message.content
                         
-                        # Etape D : Logging & ID
                         new_id = str(uuid.uuid4())
                         st.session_state["last_olivia_id"] = new_id
                         
