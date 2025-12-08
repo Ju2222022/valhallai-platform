@@ -254,7 +254,7 @@ def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     {{
         "executive_summary": "Summary...",
         "items": [
-            {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["..."], "impact": "High" (or "Medium", "Low") }}
+            {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["..."], "impact": "High/Medium/Low" }}
         ]
     }}
     """
@@ -279,8 +279,12 @@ def apply_theme():
     st.markdown(f"""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
+    
+    /* GLOBAL */
     .stApp {{ background-color: {c['background']}; font-family: 'Inter', sans-serif; color: {c['text']}; }}
     h1, h2, h3 {{ font-family: 'Montserrat', sans-serif !important; color: {c['primary']} !important; }}
+    
+    /* CARDS */
     .info-card {{ 
         background-color: {c['card']}; 
         padding: 2rem; 
@@ -291,9 +295,55 @@ def apply_theme():
         flex-direction: column;
         justify-content: flex-start;
     }}
+    
+    /* LOGO & SIDEBAR */
     .logo-text {{ font-family: 'Montserrat', sans-serif; font-weight: 700; font-size: 1.4rem; color: {c['text']}; }}
     .logo-sub {{ font-size: 0.7rem; letter-spacing: 2px; text-transform: uppercase; color: {c['text_secondary']}; font-weight: 500; }}
-    div.stButton > button:first-child {{ background-color: {c['primary']} !important; color: {c['button_text']} !important; border-radius: 8px; font-weight: 600; width: 100%;}}
+    
+    /* BOUTONS (Le Vert Valhallai) */
+    div.stButton > button:first-child {{ 
+        background-color: {c['primary']} !important; 
+        color: {c['button_text']} !important; 
+        border-radius: 8px; 
+        font-weight: 600; 
+        width: 100%;
+        border: none;
+    }}
+    div.stButton > button:first-child:hover {{
+        filter: brightness(1.1);
+    }}
+
+    /* --- HARMONISATION DES ÉLÉMENTS STREAMLIT (C'est ici qu'on enlève le rouge) --- */
+    
+    /* 1. MultiSelect Tags (Les filtres de MIA) */
+    .stMultiSelect span[data-baseweb="tag"] {{
+        background-color: {c['primary']} !important;
+        color: {c['button_text']} !important;
+    }}
+    
+    /* 2. Sidebar Radio Buttons (Menu de gauche) */
+    /* Le texte sélectionné */
+    div[role="radiogroup"] label[data-checked="true"] {{
+        color: {c['primary']} !important;
+        font-weight: bold !important;
+    }}
+    /* Le petit rond (radio) */
+    div[role="radiogroup"] div[data-testid="stMarkdownContainer"] p {{
+        font-weight: 500;
+    }}
+    
+    /* 3. Checkboxes (Night Mode) */
+    div[data-baseweb="checkbox"] div[aria-checked="true"] {{
+        background-color: {c['primary']} !important;
+        border-color: {c['primary']} !important;
+    }}
+    
+    /* 4. Focus Borders (Champs texte) */
+    .stTextInput > div > div[data-baseweb="input"]:focus-within {{
+        border-color: {c['primary']} !important;
+        box-shadow: 0 0 0 1px {c['primary']} !important;
+    }}
+    
     </style>
     """, unsafe_allow_html=True)
 
@@ -398,11 +448,9 @@ def page_mia():
         st.markdown("---")
         
         items = results.get("items", [])
-        # Filtrage logique
         filtered_items = [i for i in items if i.get('impact', 'Low').capitalize() in selected_impacts]
         
-        if not filtered_items:
-            st.warning("No updates found matching your filters.")
+        if not filtered_items: st.warning("No updates found matching your filters.")
         
         for item in filtered_items:
             impact = item.get('impact', 'Low').lower()
@@ -485,6 +533,7 @@ def page_dashboard():
     st.markdown(f"<span class='sub-text'>{config.APP_SLOGAN}</span>", unsafe_allow_html=True)
     st.markdown("###")
     c1, c2, c3 = st.columns(3)
+    
     with c1: 
         st.markdown(f"""<div class="info-card"><h3>🤖 OlivIA</h3><p class='sub-text'>{config.AGENTS['olivia']['description']}</p></div>""", unsafe_allow_html=True)
         st.write("")
