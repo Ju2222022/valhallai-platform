@@ -24,7 +24,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Configuration de l'agent MIA
 if "mia" not in config.AGENTS:
     config.AGENTS["mia"] = {
         "name": "MIA",
@@ -32,39 +31,19 @@ if "mia" not in config.AGENTS:
         "description": "Market Intelligence Agent (Regulatory Watch & Monitoring)."
     }
 
-# LISTE DE SECOURS (FALLBACK) - EXPERT MODE
-# Utilisée si la connexion Google Sheets échoue ou pour initialiser l'app.
+# LISTE DE SECOURS (FALLBACK)
 DEFAULT_DOMAINS = [
-    # --- EUROPE ---
-    "eur-lex.europa.eu",   # Journal Officiel UE
-    "europa.eu",           # Commission Européenne
-    "echa.europa.eu",      # REACH / RoHS / PFAS
-    "cenelec.eu",          # Normes Électriques EU
-    "single-market-economy.ec.europa.eu", # Harmonized Standards
-    
-    # --- USA ---
-    "fda.gov",             # Médical / Lasers
-    "fcc.gov",             # Radio / Wireless / EMC
-    "cpsc.gov",            # Sécurité Consommateur (Rappels)
-    "osha.gov",            # Sécurité électrique (NRTL)
-    "phmsa.dot.gov",       # Transport Batteries (HazMat)
-
-    # --- INTERNATIONAL & NORMES ---
-    "iso.org",             # Normes Générales
-    "iec.ch",              # Normes Électroniques (CRUCIAL)
-    "unece.org",           # Transport UN 38.3 (Batteries)
-    "iata.org",            # Transport Aérien
-
-    # --- UK & ASIE ---
-    "gov.uk",              # Royaume-Uni (UKCA)
-    "meti.go.jp",          # Japon (PSE)
-    "kats.go.kr",          # Corée (KC)
-
-    # --- NEWS & VEILLE ---
-    "reuters.com",
-    "raps.org",            # Regulatory Affairs Prof. Society
-    "medtechdive.com",
-    "complianceandrisks.com"
+    # EUROPE
+    "eur-lex.europa.eu", "europa.eu", "echa.europa.eu", "cenelec.eu", 
+    "single-market-economy.ec.europa.eu",
+    # USA
+    "fda.gov", "fcc.gov", "cpsc.gov", "osha.gov", "phmsa.dot.gov",
+    # INTERNATIONAL
+    "iso.org", "iec.ch", "unece.org", "iata.org",
+    # UK & ASIE
+    "gov.uk", "meti.go.jp", "kats.go.kr",
+    # NEWS & VEILLE
+    "reuters.com", "raps.org", "medtechdive.com", "complianceandrisks.com"
 ]
 
 # =============================================================================
@@ -127,7 +106,6 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
         try: log_sheet = wb.worksheet("Logs")
         except: log_sheet = wb.add_worksheet(title="Logs", rows=1000, cols=6)
         
-        # Auto-réparation des en-têtes
         if not log_sheet.cell(1, 1).value:
             log_sheet.update("A1:F1", [["Date", "Time", "Report ID", "Type", "Details", "Metrics"]])
             
@@ -164,21 +142,17 @@ def update_market(idx, name):
         try: wb.sheet1.update_cell(idx + 1, 1, name); st.cache_data.clear()
         except: pass
 
-# --- DOMAINES (Watch_domains) ---
+# --- DOMAINES ---
 def get_domains():
     wb = get_gsheet_workbook()
-    # 1. On tente de lire la DB
     if wb:
         try:
             try: sheet = wb.worksheet("Watch_domains")
             except: 
-                # Si l'onglet n'existe pas, on le crée avec la liste de secours
                 sheet = wb.add_worksheet("Watch_domains", 100, 1)
                 for d in DEFAULT_DOMAINS: sheet.append_row([d])
             return (sheet.col_values(1) if sheet.col_values(1) else DEFAULT_DOMAINS), True
         except: pass
-    
-    # 2. Si échec DB, on utilise la liste de secours du code (Fallback)
     return DEFAULT_DOMAINS, False
 
 def add_domain(name):
@@ -221,15 +195,13 @@ def run_deep_search(query, days=None):
         k = st.secrets.get("TAVILY_API_KEY")
         if not k: return None, "Key Missing"
         tavily = TavilyClient(api_key=k)
-        
-        # Récupération dynamique ou fallback
         doms, _ = get_domains()
         
         params = {
             "query": query,
             "search_depth": "advanced",
             "max_results": 5 if days else 3,
-            "include_domains": doms # Utilise la liste chargée (DB ou Default)
+            "include_domains": doms
         }
         
         if days: params["days"] = days
@@ -286,12 +258,31 @@ def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     CONTEXT: User monitoring: "{topic}" | Markets: {', '.join(markets)}
     SELECTED TIMEFRAME: {timeframe_label}
     RAW SEARCH DATA: {raw_search_data}
-    MISSION: Filter and Analyze. Keep only updates relevant to the timeframe.
+    
+    MISSION:
+    1. Filter raw data to keep only relevant updates.
+    2. Analyze Impact (High/Medium/Low).
+    3. CLASSIFY each item into one of these strict categories:
+       - "Regulation" (Laws, Directives, Acts)
+       - "Standard" (ISO, IEC, EN norms)
+       - "Guidance" (MDCG, FDA Guidance, Whitepapers)
+       - "Enforcement" (Warning Letters, Recalls, Audit Findings)
+       - "News" (Articles, Press Releases, Trends)
+    
     OUTPUT FORMAT (Strict JSON):
     {{
         "executive_summary": "Summary...",
         "items": [
-            {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["..."], "impact": "High" (or "Medium", "Low") }}
+            {{ 
+                "title": "...", 
+                "date": "YYYY-MM-DD", 
+                "source_name": "...", 
+                "url": "...", 
+                "summary": "...", 
+                "tags": ["Tag1"], 
+                "impact": "High/Medium/Low",
+                "category": "Regulation" (or Standard, Guidance, Enforcement, News)
+            }}
         ]
     }}
     """
@@ -319,14 +310,8 @@ def apply_theme():
     .stApp {{ background-color: {c['background']}; font-family: 'Inter', sans-serif; color: {c['text']}; }}
     h1, h2, h3 {{ font-family: 'Montserrat', sans-serif !important; color: {c['primary']} !important; }}
     .info-card {{ 
-        background-color: {c['card']}; 
-        padding: 2rem; 
-        border-radius: 12px; 
-        border: 1px solid {c['border']}; 
-        min-height: 220px; 
-        display: flex;
-        flex-direction: column;
-        justify-content: flex-start;
+        background-color: {c['card']}; padding: 2rem; border-radius: 12px; border: 1px solid {c['border']}; 
+        min-height: 220px; display: flex; flex-direction: column; justify-content: flex-start;
     }}
     .logo-text {{ font-family: 'Montserrat', sans-serif; font-weight: 700; font-size: 1.4rem; color: {c['text']}; }}
     .logo-sub {{ font-size: 0.7rem; letter-spacing: 2px; text-transform: uppercase; color: {c['text_secondary']}; font-weight: 500; }}
@@ -426,31 +411,55 @@ def page_mia():
         st.markdown("### 📋 Monitoring Report")
         st.info(f"**Executive Summary:** {results.get('executive_summary', 'No summary.')}")
         
-        c_filter, c_legend = st.columns([1, 2])
-        with c_filter:
+        # --- FILTRES AVANCÉS AVEC NOUVELLE CATÉGORIE ---
+        c_filter1, c_filter2, c_legend = st.columns([1, 1, 1.5])
+        with c_filter1:
             selected_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"])
+        with c_filter2:
+            # 5 Catégories
+            all_categories = ["Regulation", "Standard", "Guidance", "Enforcement", "News"]
+            selected_types = st.multiselect("🗂️ Filter by Type", all_categories, default=all_categories)
         with c_legend:
-            st.caption("ℹ️ Impact Legend:")
-            l1, l2, l3 = st.columns(3)
-            l1.markdown("🔴 **High**: Critical")
-            l2.markdown("🟡 **Medium**: Important")
-            l3.markdown("🟢 **Low**: Info")
+            st.caption("ℹ️ Legend:")
+            st.markdown("🔴 High | 🟡 Medium | 🟢 Low")
         
         st.markdown("---")
+        
         items = results.get("items", [])
-        filtered_items = [i for i in items if i.get('impact', 'Low').capitalize() in selected_impacts]
+        
+        # LOGIQUE DE FILTRAGE
+        filtered_items = [
+            i for i in items 
+            if i.get('impact', 'Low').capitalize() in selected_impacts
+            and i.get('category', 'News').capitalize() in selected_types
+        ]
         
         if not filtered_items: st.warning("No updates found matching your filters.")
+        
         for item in filtered_items:
             impact = item.get('impact', 'Low').lower()
+            category = item.get('category', 'News')
+            
+            # Icone Impact
             if impact == 'high': icon = "🔴"
             elif impact == 'medium': icon = "🟡"
             else: icon = "🟢"
+            
+            # Badge Catégorie (Emoji Mapping)
+            cat_map = {
+                "Regulation": "📜", 
+                "Standard": "📏", 
+                "Guidance": "📘", 
+                "Enforcement": "📢", # Nouveau
+                "News": "📰"
+            }
+            cat_icon = cat_map.get(category, "📄")
+            
             with st.container():
                 c1, c2 = st.columns([0.1, 0.9])
                 with c1: st.markdown(f"## {icon}")
                 with c2:
-                    st.markdown(f"**[{item['title']}]({item['url']})**")
+                    st.markdown(f"**[{cat_icon} {category}]** [{item['title']}]({item['url']})")
                     st.caption(f"📅 {item['date']} | 🏛️ {item['source_name']}")
                     st.write(item['summary'])
                     tags = "".join([f"<span style='background-color:#eee; padding:2px 8px; border-radius:10px; font-size:0.8em; margin-right:5px; color:#333'>{tag}</span>" for tag in item.get('tags', [])])
