@@ -356,7 +356,7 @@ def page_mia():
     st.markdown("---")
 
     markets, _ = get_markets()
-    col1, col2, col3 = st.columns([2, 1, 1]) # 3 colonnes
+    col1, col2, col3 = st.columns([2, 1, 1]) 
     
     with col1: 
         topic = st.text_input("🔎 Watch Topic / Product", placeholder="e.g. Cybersecurity for SaMD")
@@ -372,9 +372,11 @@ def page_mia():
         selected_label = st.selectbox("⏱️ Timeframe", list(timeframe_map.keys()), index=1)
         days_limit = timeframe_map[selected_label]
 
-    if st.button(f"🚀 Launch Monitoring ({selected_label})", type="primary"):
+    # --- CORRECTION ICI : Bouton épuré ---
+    if st.button("🚀 Launch Monitoring", type="primary"):
         client = get_openai_client()
         if client and topic:
+            # On garde l'info dans le spinner pour confirmer que ça tourne bien avec le bon paramètre
             with st.spinner(f"📡 MIA is scanning the horizon... ({selected_label})"):
                 try:
                     # 1. Recherche avec limite de temps
