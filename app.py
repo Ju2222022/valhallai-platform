@@ -321,6 +321,22 @@ def apply_theme():
     div[role="radiogroup"] label[data-checked="true"] {{ color: {c['primary']} !important; font-weight: bold !important; }}
     div[data-baseweb="checkbox"] div[aria-checked="true"] {{ background-color: {c['primary']} !important; border-color: {c['primary']} !important; }}
     .stTextInput > div > div[data-baseweb="input"]:focus-within {{ border-color: {c['primary']} !important; box-shadow: 0 0 0 1px {c['primary']} !important; }}
+    
+    /* BOUTON FANTÔME POUR LE LOGO (Navigation) */
+    div[data-testid="stSidebar"] .stButton:first-of-type {
+        position: absolute;
+        top: 1rem;
+        left: 1rem;
+        width: 85%;
+        height: 100px;
+        z-index: 999;
+    }
+    div[data-testid="stSidebar"] .stButton:first-of-type button {
+        width: 100%;
+        height: 100%;
+        opacity: 0;
+        cursor: pointer;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -421,14 +437,14 @@ def page_mia():
             selected_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"])
             
         with c_legend:
-            # STYLE UI : Légende Visuelle en HTML (plus gros, plus lisible)
+            st.write("") 
+            st.write("")
             st.markdown(
                 """
-                <div style="margin-top: 5px;">
-                    <strong>ℹ️ Impact Legend:</strong><br>
-                    <span style='font-size:1.1em; color: #e53935;'>●</span> <b>High</b> (Critical)<br>
-                    <span style='font-size:1.1em; color: #fb8c00;'>●</span> <b>Medium</b> (Imp.)<br>
-                    <span style='font-size:1.1em; color: #43a047;'>●</span> <b>Low</b> (Info)
+                <div style="padding-top: 5px; font-size: 0.9em; white-space: nowrap;">
+                    <span style='color: #e53935;'>●</span> High &nbsp;
+                    <span style='color: #fb8c00;'>●</span> Medium &nbsp;
+                    <span style='color: #43a047;'>●</span> Low
                 </div>
                 """, 
                 unsafe_allow_html=True
@@ -555,6 +571,10 @@ def page_dashboard():
 
 def render_sidebar():
     with st.sidebar:
+        # BOUTON FANTÔME (Navigation par clic sur logo)
+        if st.button("Home", key="logo_home_btn"):
+            navigate_to("Dashboard")
+            
         st.markdown(get_logo_html(), unsafe_allow_html=True)
         st.markdown(f"<div class='logo-text'>{config.APP_NAME}</div>", unsafe_allow_html=True)
         st.markdown("---")
