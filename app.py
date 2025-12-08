@@ -3,6 +3,7 @@ import os
 from openai import OpenAI
 from pypdf import PdfReader
 import io
+import base64
 
 # --- 1. CONFIGURATION & STATE MANAGEMENT ---
 st.set_page_config(
@@ -12,7 +13,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Initialisation des variables de session
+# Initialisation des variables
 if "authenticated" not in st.session_state:
     st.session_state["authenticated"] = False
 if "current_page" not in st.session_state:
@@ -20,158 +21,87 @@ if "current_page" not in st.session_state:
 if "dark_mode" not in st.session_state:
     st.session_state["dark_mode"] = False
 
-# Fonction de navigation interne
 def navigate_to(page_name):
     st.session_state["current_page"] = page_name
     st.rerun()
 
-# --- 2. THEME ENGINE (CSS DYNAMIQUE) ---
+# --- 2. ASSETS & LOGO GENERATOR (SVG) ---
+def get_logo_svg():
+    """Génère un logo vectoriel (Shield + V) directement en code"""
+    # Couleurs dynamiques selon le logo
+    color_fill = "#295A63" # Racing Green
+    color_accent = "#C8A951" # Gold
+    
+    return f"""
+    <svg width="60" height="60" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+        <path d="M50 95C50 95 10 75 10 30V15L50 5L90 15V30C90 75 50 95 50 95Z" fill="{color_fill}" stroke="{color_accent}" stroke-width="4"/>
+        <path d="M35 40L50 65L65 40" stroke="white" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+    </svg>
+    """
+
+def get_logo_html():
+    svg = get_logo_svg()
+    b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
+    return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 15px;">'
+
+# --- 3. THEME ENGINE (CSS) ---
 def get_theme_css():
-    # Définition des palettes
     if st.session_state["dark_mode"]:
-        # MODE SOMBRE (Racing Night)
-        bg_color = "#0F2E33"      # Vert très sombre
-        card_bg = "#1A3C42"       # Vert légèrement plus clair
-        text_color = "#FFFFFF"
-        sub_text_color = "#A0B0B5"
-        primary_color = "#C8A951" # Gold (Action)
-        button_text = "#000000"   # Texte NOIR sur bouton Gold
-        border_color = "#295A63"
-        input_bg = "#13363C"
-        sidebar_bg = "#0F2E33"
+        # MODE SOMBRE
+        bg_color, card_bg = "#0F2E33", "#1A3C42"
+        text_color, sub_text_color = "#FFFFFF", "#A0B0B5"
+        primary_color, button_text = "#C8A951", "#000000"
+        border_color, input_bg, sidebar_bg = "#295A63", "#13363C", "#0F2E33"
+        logo_text_color = "#FFFFFF"
     else:
-        # MODE CLAIR (Racing Day)
-        bg_color = "#F5F7F9"      # Gris bleuté pâle
-        card_bg = "#FFFFFF"       # Blanc pur
-        text_color = "#1A202C"    # Noir graphite
-        sub_text_color = "#4A5568"
-        primary_color = "#295A63" # Racing Green (Action)
-        button_text = "#FFFFFF"   # Texte BLANC sur bouton Green
-        border_color = "#E2E8F0"
-        input_bg = "#FFFFFF"
-        sidebar_bg = "#FFFFFF"
+        # MODE CLAIR
+        bg_color, card_bg = "#F5F7F9", "#FFFFFF"
+        text_color, sub_text_color = "#1A202C", "#4A5568"
+        primary_color, button_text = "#295A63", "#FFFFFF"
+        border_color, input_bg, sidebar_bg = "#FFFFFF", "#FFFFFF", "#FFFFFF"
+        logo_text_color = "#295A63"
 
     return f"""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
 
-    /* BASE */
-    .stApp {{
-        background-color: {bg_color};
-        font-family: 'Inter', sans-serif;
-        color: {text_color};
-    }}
-    
-    /* HEADER CLEANUP */
+    .stApp {{ background-color: {bg_color}; font-family: 'Inter', sans-serif; color: {text_color}; }}
     header[data-testid="stHeader"] {{ background: transparent; }}
-    .stDeployButton {{ display:none; }}
-    #MainMenu {{ visibility: hidden; }}
-    footer {{ visibility: hidden; }}
+    .stDeployButton, #MainMenu, footer {{ display:none; }}
 
-    /* TYPOGRAPHY */
-    h1, h2, h3 {{
-        font-family: 'Montserrat', sans-serif !important;
-        color: {primary_color if not st.session_state["dark_mode"] else "#FFFFFF"} !important;
-        letter-spacing: -0.5px;
-    }}
-    p, li, .stMarkdown {{ color: {text_color}; font-weight: 400; line-height: 1.6; }}
+    h1, h2, h3 {{ font-family: 'Montserrat', sans-serif !important; color: {primary_color if not st.session_state["dark_mode"] else "#FFFFFF"} !important; letter-spacing: -0.5px; }}
+    p, li, .stMarkdown {{ color: {text_color}; }}
     .sub-text {{ color: {sub_text_color}; font-size: 0.9rem; }}
+    
+    /* LOGO TITLE STYLES */
+    .logo-container {{ display: flex; align-items: center; margin-bottom: 20px; }}
+    .logo-text {{ font-family: 'Montserrat', sans-serif; font-weight: 700; font-size: 1.4rem; color: {logo_text_color}; line-height: 1.2; }}
+    .logo-sub {{ font-size: 0.7rem; letter-spacing: 2px; text-transform: uppercase; color: {sub_text_color}; font-weight: 500; }}
 
-    /* SIDEBAR NAVIGATION */
-    section[data-testid="stSidebar"] {{
-        background-color: {sidebar_bg};
-        border-right: 1px solid {border_color};
-    }}
+    /* SIDEBAR */
+    section[data-testid="stSidebar"] {{ background-color: {sidebar_bg}; border-right: 1px solid {border_color}; }}
     div[role="radiogroup"] > label > div:first-child {{ display: none !important; }}
-    div[role="radiogroup"] label {{
-        padding: 12px 20px;
-        border-radius: 6px;
-        margin-bottom: 8px;
-        border: 1px solid transparent;
-        transition: all 0.2s;
-        cursor: pointer;
-        color: {sub_text_color};
-        font-weight: 500;
-    }}
-    div[role="radiogroup"] label:hover {{
-        background-color: {bg_color};
-        color: {primary_color};
-    }}
-    div[role="radiogroup"] label[data-checked="true"] {{
-        background-color: {primary_color if not st.session_state["dark_mode"] else "#C8A951"} !important;
-        color: {button_text if not st.session_state["dark_mode"] else "#000000"} !important;
-        font-weight: 600;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-    }}
+    div[role="radiogroup"] label {{ padding: 12px 20px; border-radius: 6px; margin-bottom: 8px; cursor: pointer; color: {sub_text_color}; font-weight: 500; transition: all 0.2s; }}
+    div[role="radiogroup"] label:hover {{ background-color: {bg_color}; color: {primary_color}; }}
+    div[role="radiogroup"] label[data-checked="true"] {{ background-color: {primary_color if not st.session_state["dark_mode"] else "#C8A951"} !important; color: {button_text if not st.session_state["dark_mode"] else "#000000"} !important; font-weight: 600; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }}
 
-    /* INPUTS */
-    .stTextInput>div>div>input, .stTextArea>div>div>textarea, .stSelectbox>div>div>div {{
-        background-color: {input_bg};
-        border: 1px solid {border_color};
-        color: {text_color};
-        border-radius: 8px;
-        padding: 10px;
-    }}
-    .stTextInput>div>div>input:focus, .stTextArea>div>div>textarea:focus {{
-        border-color: {primary_color};
-        box-shadow: 0 0 0 1px {primary_color};
-    }}
+    /* INPUTS & BUTTONS */
+    .stTextInput>div>div>input, .stTextArea>div>div>textarea, .stSelectbox>div>div>div {{ background-color: {input_bg}; border: 1px solid {border_color}; color: {text_color}; border-radius: 8px; }}
+    .stTextInput>div>div>input:focus, .stTextArea>div>div>textarea:focus {{ border-color: {primary_color}; }}
     
-    /* --- CORRECTIF BOUTONS BLINDÉ --- */
-    /* Cible le bouton ET tous ses enfants directs (p) */
-    div.stButton > button:first-child {{
-        background-color: {primary_color} !important;
-        color: {button_text} !important;
-        border-radius: 8px;
-        border: none;
-        padding: 0.6rem 1.2rem;
-        font-family: 'Montserrat', sans-serif;
-        font-weight: 600;
-        width: 100%;
-        margin-top: 10px;
-        transition: all 0.2s;
-    }}
-    
-    /* Force la couleur sur le texte interne du bouton */
-    div.stButton > button:first-child p {{
-        color: {button_text} !important;
-    }}
+    div.stButton > button:first-child {{ background-color: {primary_color} !important; color: {button_text} !important; border-radius: 8px; border: none; padding: 0.6rem 1.2rem; font-family: 'Montserrat', sans-serif; font-weight: 600; width: 100%; margin-top: 10px; }}
+    div.stButton > button:first-child p {{ color: {button_text} !important; }}
+    div.stButton > button:first-child:hover {{ filter: brightness(1.1); color: {button_text} !important; }}
 
-    /* Effet Survol */
-    div.stButton > button:first-child:hover {{
-        filter: brightness(1.1);
-        box-shadow: 0 4px 12px rgba(0,0,0,0.15);
-        color: {button_text} !important;
-    }}
-    div.stButton > button:first-child:active {{
-        color: {button_text} !important;
-    }}
-
-    /* CARDS */
-    .info-card {{
-        background-color: {card_bg};
-        padding: 2rem;
-        border-radius: 12px;
-        border: 1px solid {border_color};
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
-        height: 100%;
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-    }}
-    
-    /* ALERTS */
+    /* CARDS & ALERTS */
+    .info-card {{ background-color: {card_bg}; padding: 2rem; border-radius: 12px; border: 1px solid {border_color}; box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05); height: 100%; display: flex; flex-direction: column; justify-content: space-between; }}
     .stSuccess {{ background-color: {card_bg}; border-left: 4px solid #295A63; color: {text_color}; }}
     .stInfo, .stWarning {{ background-color: {card_bg}; border-left: 4px solid #C8A951; color: {text_color}; }}
-    
     </style>
     """
-
-# Injection du CSS
 st.markdown(get_theme_css(), unsafe_allow_html=True)
 
-# --- 3. BACKEND HELPERS ---
-
+# --- 4. BACKEND HELPERS ---
 def check_password():
     correct_token = st.secrets.get("APP_TOKEN")
     if not correct_token:
@@ -201,7 +131,7 @@ def extract_text_from_pdf(file_bytes):
     except Exception as e:
         return f"Error: {str(e)}"
 
-# --- 4. PROMPTS ---
+# --- 5. PROMPTS ---
 def prompt_olivia(description, countries, output_lang):
     pays_str = ", ".join(countries)
     return f"""
@@ -219,32 +149,33 @@ def prompt_eva(context, doc_text, output_lang):
     Mission: Verify compliance in {output_lang}. Start with ✅/⚠️/❌.
     """
 
-# --- 5. MAIN APPLICATION ---
-
+# --- 6. MAIN APP ---
 def main_app():
-    # --- SIDEBAR ---
     with st.sidebar:
-        st.markdown("## VALHALLAI")
-        st.markdown(f"<div style='margin-top: -15px; color: {'#A0B0B5' if st.session_state['dark_mode'] else '#558D98'}; font-size: 0.8rem; letter-spacing: 1px; font-weight: 600;'>REGULATORY SHIELD</div>", unsafe_allow_html=True)
+        # --- HEADER AVEC LOGO ---
+        logo_html = get_logo_html()
+        st.markdown(f"""
+        <div class="logo-container">
+            {logo_html}
+            <div>
+                <div class="logo-text">VALHALLAI</div>
+                <div class="logo-sub">REGULATORY SHIELD</div>
+            </div>
+        </div>
+        """, unsafe_allow_html=True)
+        
         st.markdown("---")
         
+        # NAV
         pages_list = ["Dashboard", "OlivIA", "EVA"]
-        
         if st.session_state["current_page"] not in pages_list:
             st.session_state["current_page"] = "Dashboard"
-            
-        current_index = pages_list.index(st.session_state["current_page"])
         
-        selected_page = st.radio(
-            "NAVIGATION", 
-            pages_list,
-            index=current_index,
-            label_visibility="collapsed"
-        )
+        selected_page = st.radio("NAVIGATION", pages_list, 
+            index=pages_list.index(st.session_state["current_page"]), label_visibility="collapsed")
         
         if selected_page != st.session_state["current_page"]:
-            st.session_state["current_page"] = selected_page
-            st.rerun()
+            navigate_to(selected_page)
 
         st.markdown("---")
         
@@ -264,48 +195,30 @@ def main_app():
             logout()
             st.rerun()
 
-    # --- API ---
     api_key = get_api_key()
     client = OpenAI(api_key=api_key) if api_key else None
 
-    # --- PAGES ---
-    
-    # 1. DASHBOARD
+    # DASHBOARD
     if st.session_state["current_page"] == "Dashboard":
         st.markdown("# Dashboard")
         st.markdown(f"<span class='sub-text'>Simplify today, amplify tomorrow.</span>", unsafe_allow_html=True)
         st.markdown("###")
         
         col1, col2 = st.columns(2)
-        
         with col1:
-            st.markdown("""
-            <div class="info-card">
-                <h3>🤖 OlivIA</h3>
-                <p class='sub-text'>Define product DNA & map regulatory landscape.</p>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown("""<div class="info-card"><h3>🤖 OlivIA</h3><p class='sub-text'>Define product DNA & map regulatory landscape.</p></div>""", unsafe_allow_html=True)
             st.write("") 
-            if st.button("Launch OlivIA Analysis ->"):
-                navigate_to("OlivIA")
-
+            if st.button("Launch OlivIA Analysis ->"): navigate_to("OlivIA")
         with col2:
-            st.markdown("""
-            <div class="info-card">
-                <h3>🔍 EVA</h3>
-                <p class='sub-text'>Audit technical documentation against requirements.</p>
-            </div>
-            """, unsafe_allow_html=True)
+            st.markdown("""<div class="info-card"><h3>🔍 EVA</h3><p class='sub-text'>Audit technical documentation against requirements.</p></div>""", unsafe_allow_html=True)
             st.write("") 
-            if st.button("Launch EVA Audit ->"):
-                navigate_to("EVA")
+            if st.button("Launch EVA Audit ->"): navigate_to("EVA")
 
-    # 2. OLIVIA
+    # OLIVIA
     elif st.session_state["current_page"] == "OlivIA":
         st.title("OlivIA Workspace")
         st.markdown("<span class='sub-text'>Define product parameters to generate requirements.</span>", unsafe_allow_html=True)
         st.markdown("---")
-        
         col1, col2 = st.columns([2, 1])
         with col1:
             desc = st.text_area("Product Definition", height=200, placeholder="Ex: Medical device class IIa...")
@@ -317,30 +230,21 @@ def main_app():
                 if client and desc:
                     with st.spinner("Analyzing..."):
                         try:
-                            response = client.chat.completions.create(
-                                model="gpt-4o", 
-                                messages=[{"role": "user", "content": prompt_olivia(desc, countries, output_lang)}],
-                                temperature=0.1
-                            )
+                            response = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt_olivia(desc, countries, output_lang)}], temperature=0.1)
                             st.session_state["last_olivia_report"] = response.choices[0].message.content
                             st.rerun()
                         except Exception as e: st.error(f"Error: {e}")
-
         if "last_olivia_report" in st.session_state:
-            st.markdown("---")
-            st.success("Analysis Generated")
-            st.markdown(st.session_state["last_olivia_report"])
+            st.markdown("---"); st.success("Analysis Generated"); st.markdown(st.session_state["last_olivia_report"])
 
-    # 3. EVA
+    # EVA
     elif st.session_state["current_page"] == "EVA":
         st.title("EVA Workspace")
         st.markdown("<span class='sub-text'>Verify documentation compliance.</span>", unsafe_allow_html=True)
         st.markdown("---")
-        
         default_ctx = st.session_state.get("last_olivia_report", "")
         with st.expander("Regulatory Context", expanded=not bool(default_ctx)):
             context = st.text_area("Requirements", value=default_ctx, height=150)
-            
         col1, col2 = st.columns([2,1])
         with col1:
             uploaded = st.file_uploader("Technical File (PDF)", type="pdf")
@@ -352,25 +256,20 @@ def main_app():
                     with st.spinner("Auditing..."):
                         txt = extract_text_from_pdf(uploaded.read())
                         try:
-                            res = client.chat.completions.create(
-                                model="gpt-4o",
-                                messages=[{"role": "user", "content": prompt_eva(context, txt, lang)}],
-                                temperature=0.1
-                            )
-                            st.markdown("### Audit Results")
-                            st.markdown(res.choices[0].message.content)
+                            res = client.chat.completions.create(model="gpt-4o", messages=[{"role": "user", "content": prompt_eva(context, txt, lang)}], temperature=0.1)
+                            st.markdown("### Audit Results"); st.markdown(res.choices[0].message.content)
                         except Exception as e: st.error(f"Error: {e}")
 
 # --- ENTRY POINT ---
-
 def main():
     if st.session_state["authenticated"]:
         main_app()
     else:
-        # LOGIN SCREEN
         col1, col2, col3 = st.columns([1, 1.5, 1])
         with col2:
             st.markdown("<br><br><br>", unsafe_allow_html=True)
+            # LOGO SUR LA PAGE DE LOGIN AUSSI
+            st.markdown(f"<div style='text-align:center'>{get_logo_html()}</div>", unsafe_allow_html=True)
             st.markdown("<h1 style='text-align: center; color: #295A63;'>VALHALLAI</h1>", unsafe_allow_html=True)
             st.text_input("Security Token", type="password", key="password_input", on_change=check_password)
 
