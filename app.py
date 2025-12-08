@@ -7,7 +7,7 @@ from datetime import datetime
 from openai import OpenAI
 from pypdf import PdfReader
 import gspread 
-from tavily import TavilyClient  # <--- Le moteur de recherche
+from tavily import TavilyClient
 
 # Imports locaux
 import config
@@ -185,12 +185,22 @@ def run_deep_search(query):
             
         tavily = TavilyClient(api_key=tavily_key)
         
-        # Recherche contextuelle
+        # Recherche contextuelle optimisée
         response = tavily.search(
             query=query,
             search_depth="advanced",
             max_results=3,
-            include_domains=["europa.eu", "eur-lex.europa.eu/oj", "fda.gov", "iso.org", "gov.uk", "reuters.com"] 
+            # C'est ici qu'on définit le "Cercle de Confiance"
+            include_domains=[
+                "eur-lex.europa.eu",  # Droit officiel UE (le plus précis)
+                "europa.eu",          # Commission Européenne
+                "eur-lex.europa.eu",  # Journal official Européen
+                "echa.europa.eu",     # European CHemical Agency
+                "fda.gov",            # USA
+                "iso.org",            # Normes internationales
+                "gov.uk",             # Royaume-Uni
+                "reuters.com",        # Actualités fiables
+            ] 
         )
         
         context_text = "### LIVE REGULATORY DATA (FROM WEB):\n"
@@ -428,7 +438,6 @@ def page_olivia():
             client = get_openai_client()
             if client and desc:
                 # 1. LOGIQUE HYBRIDE : DEEP SEARCH
-                # On active la recherche pour les marchés complexes
                 target_regions = ["EU", "USA", "China", "UK"]
                 use_deep_search = any(r in str(countries) for r in target_regions)
                 deep_context = ""
