@@ -286,7 +286,7 @@ def apply_theme():
         padding: 2rem; 
         border-radius: 12px; 
         border: 1px solid {c['border']}; 
-        min-height: 220px; /* ALIGNEMENT HAUTEUR */
+        min-height: 220px; 
         display: flex;
         flex-direction: column;
         justify-content: flex-start;
@@ -382,6 +382,15 @@ def page_mia():
     if results:
         st.markdown("### 📋 Monitoring Report")
         st.info(f"**Executive Summary:** {results.get('executive_summary', 'No summary.')}")
+        
+        # --- LÉGENDE AJOUTÉE ICI ---
+        st.caption("ℹ️ Impact Legend:")
+        l1, l2, l3 = st.columns(3)
+        l1.markdown("🔴 **High**: Critical / Mandatory")
+        l2.markdown("🟡 **Medium**: Important / Guidelines")
+        l3.markdown("🟢 **Low**: Informative / News")
+        # ---------------------------
+        
         st.markdown("---")
         items = results.get("items", [])
         if not items: st.warning("No significant updates found.")
@@ -466,20 +475,15 @@ def page_dashboard():
     st.markdown(f"<span class='sub-text'>{config.APP_SLOGAN}</span>", unsafe_allow_html=True)
     st.markdown("###")
     c1, c2, c3 = st.columns(3)
-    
-    # CORRECTION : Utilisation de if st.button() au lieu de on_click pour éviter le warning no-op
     with c1: 
         st.markdown(f"""<div class="info-card"><h3>🤖 OlivIA</h3><p class='sub-text'>{config.AGENTS['olivia']['description']}</p></div>""", unsafe_allow_html=True)
-        st.write("")
-        if st.button("Launch OlivIA ->"): navigate_to("OlivIA")
+        st.write(""); st.button("Launch OlivIA ->", on_click=navigate_to, args=("OlivIA",))
     with c2: 
         st.markdown(f"""<div class="info-card"><h3>🔍 EVA</h3><p class='sub-text'>{config.AGENTS['eva']['description']}</p></div>""", unsafe_allow_html=True)
-        st.write("")
-        if st.button("Launch EVA ->"): navigate_to("EVA")
+        st.write(""); st.button("Launch EVA ->", on_click=navigate_to, args=("EVA",))
     with c3: 
         st.markdown(f"""<div class="info-card"><h3>{config.AGENTS['mia']['icon']} {config.AGENTS['mia']['name']}</h3><p class='sub-text'>{config.AGENTS['mia']['description']}</p></div>""", unsafe_allow_html=True)
-        st.write("")
-        if st.button("Launch MIA ->"): navigate_to("MIA")
+        st.write(""); st.button("Launch MIA ->", on_click=navigate_to, args=("MIA",))
 
 def render_sidebar():
     with st.sidebar:
