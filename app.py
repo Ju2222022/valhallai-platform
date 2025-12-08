@@ -32,9 +32,39 @@ if "mia" not in config.AGENTS:
         "description": "Market Intelligence Agent (Regulatory Watch & Monitoring)."
     }
 
+# LISTE DE SECOURS (FALLBACK) - EXPERT MODE
+# Utilisée si la connexion Google Sheets échoue ou pour initialiser l'app.
 DEFAULT_DOMAINS = [
-    "eur-lex.europa.eu", "europa.eu", "fda.gov", "iso.org", "gov.uk", "reuters.com", 
-    "raps.org", "medtechdive.com"
+    # --- EUROPE ---
+    "eur-lex.europa.eu",   # Journal Officiel UE
+    "europa.eu",           # Commission Européenne
+    "echa.europa.eu",      # REACH / RoHS / PFAS
+    "cenelec.eu",          # Normes Électriques EU
+    "single-market-economy.ec.europa.eu", # Harmonized Standards
+    
+    # --- USA ---
+    "fda.gov",             # Médical / Lasers
+    "fcc.gov",             # Radio / Wireless / EMC
+    "cpsc.gov",            # Sécurité Consommateur (Rappels)
+    "osha.gov",            # Sécurité électrique (NRTL)
+    "phmsa.dot.gov",       # Transport Batteries (HazMat)
+
+    # --- INTERNATIONAL & NORMES ---
+    "iso.org",             # Normes Générales
+    "iec.ch",              # Normes Électroniques (CRUCIAL)
+    "unece.org",           # Transport UN 38.3 (Batteries)
+    "iata.org",            # Transport Aérien
+
+    # --- UK & ASIE ---
+    "gov.uk",              # Royaume-Uni (UKCA)
+    "meti.go.jp",          # Japon (PSE)
+    "kats.go.kr",          # Corée (KC)
+
+    # --- NEWS & VEILLE ---
+    "reuters.com",
+    "raps.org",            # Regulatory Affairs Prof. Society
+    "medtechdive.com",
+    "complianceandrisks.com"
 ]
 
 # =============================================================================
@@ -97,6 +127,7 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
         try: log_sheet = wb.worksheet("Logs")
         except: log_sheet = wb.add_worksheet(title="Logs", rows=1000, cols=6)
         
+        # Auto-réparation des en-têtes
         if not log_sheet.cell(1, 1).value:
             log_sheet.update("A1:F1", [["Date", "Time", "Report ID", "Type", "Details", "Metrics"]])
             
@@ -133,17 +164,21 @@ def update_market(idx, name):
         try: wb.sheet1.update_cell(idx + 1, 1, name); st.cache_data.clear()
         except: pass
 
-# --- DOMAINES ---
+# --- DOMAINES (Watch_domains) ---
 def get_domains():
     wb = get_gsheet_workbook()
+    # 1. On tente de lire la DB
     if wb:
         try:
             try: sheet = wb.worksheet("Watch_domains")
             except: 
+                # Si l'onglet n'existe pas, on le crée avec la liste de secours
                 sheet = wb.add_worksheet("Watch_domains", 100, 1)
                 for d in DEFAULT_DOMAINS: sheet.append_row([d])
             return (sheet.col_values(1) if sheet.col_values(1) else DEFAULT_DOMAINS), True
         except: pass
+    
+    # 2. Si échec DB, on utilise la liste de secours du code (Fallback)
     return DEFAULT_DOMAINS, False
 
 def add_domain(name):
@@ -186,13 +221,15 @@ def run_deep_search(query, days=None):
         k = st.secrets.get("TAVILY_API_KEY")
         if not k: return None, "Key Missing"
         tavily = TavilyClient(api_key=k)
+        
+        # Récupération dynamique ou fallback
         doms, _ = get_domains()
         
         params = {
             "query": query,
             "search_depth": "advanced",
             "max_results": 5 if days else 3,
-            "include_domains": doms
+            "include_domains": doms # Utilise la liste chargée (DB ou Default)
         }
         
         if days: params["days"] = days
@@ -254,7 +291,7 @@ def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     {{
         "executive_summary": "Summary...",
         "items": [
-            {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["..."], "impact": "High/Medium/Low" }}
+            {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["..."], "impact": "High" (or "Medium", "Low") }}
         ]
     }}
     """
@@ -279,12 +316,8 @@ def apply_theme():
     st.markdown(f"""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
-    
-    /* GLOBAL */
     .stApp {{ background-color: {c['background']}; font-family: 'Inter', sans-serif; color: {c['text']}; }}
     h1, h2, h3 {{ font-family: 'Montserrat', sans-serif !important; color: {c['primary']} !important; }}
-    
-    /* CARDS */
     .info-card {{ 
         background-color: {c['card']}; 
         padding: 2rem; 
@@ -295,55 +328,15 @@ def apply_theme():
         flex-direction: column;
         justify-content: flex-start;
     }}
-    
-    /* LOGO & SIDEBAR */
     .logo-text {{ font-family: 'Montserrat', sans-serif; font-weight: 700; font-size: 1.4rem; color: {c['text']}; }}
     .logo-sub {{ font-size: 0.7rem; letter-spacing: 2px; text-transform: uppercase; color: {c['text_secondary']}; font-weight: 500; }}
+    div.stButton > button:first-child {{ background-color: {c['primary']} !important; color: {c['button_text']} !important; border-radius: 8px; font-weight: 600; width: 100%;}}
     
-    /* BOUTONS (Le Vert Valhallai) */
-    div.stButton > button:first-child {{ 
-        background-color: {c['primary']} !important; 
-        color: {c['button_text']} !important; 
-        border-radius: 8px; 
-        font-weight: 600; 
-        width: 100%;
-        border: none;
-    }}
-    div.stButton > button:first-child:hover {{
-        filter: brightness(1.1);
-    }}
-
-    /* --- HARMONISATION DES ÉLÉMENTS STREAMLIT (C'est ici qu'on enlève le rouge) --- */
-    
-    /* 1. MultiSelect Tags (Les filtres de MIA) */
-    .stMultiSelect span[data-baseweb="tag"] {{
-        background-color: {c['primary']} !important;
-        color: {c['button_text']} !important;
-    }}
-    
-    /* 2. Sidebar Radio Buttons (Menu de gauche) */
-    /* Le texte sélectionné */
-    div[role="radiogroup"] label[data-checked="true"] {{
-        color: {c['primary']} !important;
-        font-weight: bold !important;
-    }}
-    /* Le petit rond (radio) */
-    div[role="radiogroup"] div[data-testid="stMarkdownContainer"] p {{
-        font-weight: 500;
-    }}
-    
-    /* 3. Checkboxes (Night Mode) */
-    div[data-baseweb="checkbox"] div[aria-checked="true"] {{
-        background-color: {c['primary']} !important;
-        border-color: {c['primary']} !important;
-    }}
-    
-    /* 4. Focus Borders (Champs texte) */
-    .stTextInput > div > div[data-baseweb="input"]:focus-within {{
-        border-color: {c['primary']} !important;
-        box-shadow: 0 0 0 1px {c['primary']} !important;
-    }}
-    
+    /* HARMONISATION COULEURS */
+    .stMultiSelect span[data-baseweb="tag"] {{ background-color: {c['primary']} !important; color: {c['button_text']} !important; }}
+    div[role="radiogroup"] label[data-checked="true"] {{ color: {c['primary']} !important; font-weight: bold !important; }}
+    div[data-baseweb="checkbox"] div[aria-checked="true"] {{ background-color: {c['primary']} !important; border-color: {c['primary']} !important; }}
+    .stTextInput > div > div[data-baseweb="input"]:focus-within {{ border-color: {c['primary']} !important; box-shadow: 0 0 0 1px {c['primary']} !important; }}
     </style>
     """, unsafe_allow_html=True)
 
@@ -433,7 +426,6 @@ def page_mia():
         st.markdown("### 📋 Monitoring Report")
         st.info(f"**Executive Summary:** {results.get('executive_summary', 'No summary.')}")
         
-        # --- BLOC DE FILTRE ET LÉGENDE ---
         c_filter, c_legend = st.columns([1, 2])
         with c_filter:
             selected_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"])
@@ -443,15 +435,12 @@ def page_mia():
             l1.markdown("🔴 **High**: Critical")
             l2.markdown("🟡 **Medium**: Important")
             l3.markdown("🟢 **Low**: Info")
-        # ---------------------------------
         
         st.markdown("---")
-        
         items = results.get("items", [])
         filtered_items = [i for i in items if i.get('impact', 'Low').capitalize() in selected_impacts]
         
         if not filtered_items: st.warning("No updates found matching your filters.")
-        
         for item in filtered_items:
             impact = item.get('impact', 'Low').lower()
             if impact == 'high': icon = "🔴"
