@@ -4,7 +4,7 @@ from openai import OpenAI
 from pypdf import PdfReader
 import io
 
-# --- CONFIGURATION DE LA PAGE ---
+# --- 1. CONFIGURATION & STATE MANAGEMENT ---
 st.set_page_config(
     page_title="VALHALLAI",
     page_icon="🛡️",
@@ -12,103 +12,145 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- LUXURY CSS & "NO-BUBBLE" SIDEBAR ---
-st.markdown("""
+# Initialisation des variables de session
+if "authenticated" not in st.session_state:
+    st.session_state["authenticated"] = False
+if "current_page" not in st.session_state:
+    st.session_state["current_page"] = "Dashboard"
+if "dark_mode" not in st.session_state:
+    st.session_state["dark_mode"] = False
+
+# Fonction de navigation interne
+def navigate_to(page_name):
+    st.session_state["current_page"] = page_name
+    st.rerun()
+
+# --- 2. THEME ENGINE (CSS DYNAMIQUE) ---
+def get_theme_css():
+    # Définition des palettes
+    if st.session_state["dark_mode"]:
+        # MODE SOMBRE (Racing Night)
+        bg_color = "#0F2E33"      # Vert très sombre
+        card_bg = "#1A3C42"       # Vert légèrement plus clair
+        text_color = "#FFFFFF"
+        primary_color = "#C8A951" # Gold
+        secondary_color = "#A0B0B5"
+        border_color = "#295A63"
+        input_bg = "#13363C"
+    else:
+        # MODE CLAIR (Racing Day)
+        bg_color = "#FAFAFA"      # Blanc cassé
+        card_bg = "#FFFFFF"
+        text_color = "#212121"
+        primary_color = "#295A63" # Racing Green
+        secondary_color = "#558D98"
+        border_color = "#E1E3E6"
+        input_bg = "#FFFFFF"
+
+    return f"""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700&family=Inter:wght@300;400;600&display=swap');
 
-    /* 1. GLOBAL RESET & STYLE */
-    .stApp {
-        background-color: #FAFAFA;
+    /* BASE */
+    .stApp {{
+        background-color: {bg_color};
         font-family: 'Inter', sans-serif;
-        color: #212121;
-    }
+        color: {text_color};
+    }}
     
-    /* Cacher les éléments Streamlit par défaut */
-    header[data-testid="stHeader"] { background: transparent; }
-    .stDeployButton { display:none; }
-    #MainMenu { visibility: hidden; }
-    footer { visibility: hidden; }
+    /* HEADER CLEANUP */
+    header[data-testid="stHeader"] {{ background: transparent; }}
+    .stDeployButton {{ display:none; }}
+    #MainMenu {{ visibility: hidden; }}
+    footer {{ visibility: hidden; }}
 
-    /* 2. TYPOGRAPHIE */
-    h1, h2, h3 {
+    /* TYPOGRAPHY */
+    h1, h2, h3 {{
         font-family: 'Montserrat', sans-serif !important;
-        color: #295A63 !important;
+        color: {primary_color} !important;
         letter-spacing: -0.5px;
-    }
-    
-    /* 3. SIDEBAR "PRO" (Transformation du Radio Button) */
-    section[data-testid="stSidebar"] {
-        background-color: #F4F5F7;
-        border-right: 1px solid #E1E3E6;
-    }
-    
-    /* Cacher le cercle du radio button */
-    div[role="radiogroup"] > label > div:first-child {
+    }}
+    p, li, .stMarkdown {{ color: {text_color}; font-weight: 300; line-height: 1.6; }}
+
+    /* SIDEBAR NAVIGATION (PRO STYLE - NO BUBBLES) */
+    section[data-testid="stSidebar"] {{
+        background-color: {bg_color};
+        border-right: 1px solid {border_color};
+    }}
+    /* Cache les ronds des radio buttons */
+    div[role="radiogroup"] > label > div:first-child {{
         display: none !important;
-    }
-    
-    /* Transformer le texte en "Bouton/Lien" */
-    div[role="radiogroup"] label {
+    }}
+    /* Transforme les labels en boutons */
+    div[role="radiogroup"] label {{
+        padding: 12px 20px;
+        border-radius: 8px;
         margin-bottom: 5px;
-        padding: 10px 15px;
-        border-radius: 6px;
-        transition: all 0.2s;
         border: 1px solid transparent;
-    }
+        transition: all 0.2s;
+        cursor: pointer;
+        color: {text_color};
+    }}
+    /* Hover effect */
+    div[role="radiogroup"] label:hover {{
+        background-color: {card_bg};
+        border-color: {border_color};
+        color: {primary_color};
+    }}
+    /* Selected Item Styling */
+    div[role="radiogroup"] label[data-checked="true"] {{
+        background-color: {primary_color} !important;
+        color: #FFFFFF !important;
+        font-weight: 600;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }}
+
+    /* CARDS & CONTAINERS */
+    .info-card {{
+        background-color: {card_bg};
+        padding: 1.5rem;
+        border-radius: 12px;
+        border: 1px solid {border_color};
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+    }}
+
+    /* INPUTS */
+    .stTextInput>div>div>input, .stTextArea>div>div>textarea, .stSelectbox>div>div>div {{
+        background-color: {input_bg};
+        border: 1px solid {border_color};
+        color: {text_color};
+        border-radius: 8px;
+    }}
     
-    /* État Normal */
-    div[role="radiogroup"] label p {
+    /* BUTTONS */
+    .stButton>button {{
+        background-color: {primary_color};
+        color: #FFFFFF;
+        border-radius: 8px;
+        border: none;
+        padding: 0.6rem 1.2rem;
         font-family: 'Montserrat', sans-serif;
         font-weight: 600;
-        font-size: 1rem;
-        color: #5E6C75; /* Gris moyen */
-    }
+        width: 100%;
+        transition: all 0.2s;
+    }}
+    .stButton>button:hover {{
+        filter: brightness(1.2);
+        box-shadow: 0 6px 12px rgba(0,0,0,0.2);
+    }}
     
-    /* État Survol (Hover) */
-    div[role="radiogroup"] label:hover {
-        background-color: rgba(41, 90, 99, 0.05); /* Vert très pâle */
-        color: #295A63;
-    }
+    /* ALERTS */
+    .stSuccess {{ background-color: {card_bg}; border-left: 4px solid {primary_color}; color: {text_color}; }}
+    .stInfo, .stWarning {{ background-color: {card_bg}; border-left: 4px solid #C8A951; color: {text_color}; }}
     
-    /* État Sélectionné (Active) - C'est un peu tricky en CSS pur Streamlit, 
-       on se base sur l'ordre ou on accepte un style simple. 
-       L'option choisie sera mise en valeur par le widget lui-même. */
-    div[role="radiogroup"] div[data-checked="true"] label {
-        background-color: #295A63 !important;
-    }
-    div[role="radiogroup"] div[data-checked="true"] label p {
-        color: #FFFFFF !important;
-    }
-
-    /* 4. BOUTONS DASHBOARD (Grosses cartes cliquables) */
-    .dashboard-btn-container {
-        border: 1px solid #E1E3E6;
-        border-radius: 12px;
-        padding: 20px;
-        background: white;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-        transition: transform 0.2s;
-        height: 100%;
-    }
-    .dashboard-btn-container:hover {
-        transform: translateY(-3px);
-        border-color: #295A63;
-    }
-
-    /* 5. INPUTS APPLE-LIKE */
-    .stTextInput>div>div>input, .stTextArea>div>div>textarea, .stSelectbox>div>div>div {
-        border-radius: 8px;
-        border: 1px solid #E1E3E6;
-    }
-    .stTextInput>div>div>input:focus, .stTextArea>div>div>textarea:focus {
-        border-color: #295A63;
-        box-shadow: 0 0 0 1px #295A63;
-    }
     </style>
-""", unsafe_allow_html=True)
+    """
 
-# --- SECURITY ---
+# Injection du CSS
+st.markdown(get_theme_css(), unsafe_allow_html=True)
+
+# --- 3. BACKEND HELPERS ---
+
 def check_password():
     correct_token = st.secrets.get("APP_TOKEN")
     if not correct_token:
@@ -118,13 +160,12 @@ def check_password():
         st.session_state["authenticated"] = True
         del st.session_state["password_input"]
     else:
-        st.error("Identifiants incorrects.")
+        st.error("Access Denied.")
 
 def logout():
     st.session_state["authenticated"] = False
-    st.rerun()
+    st.session_state["current_page"] = "Dashboard"
 
-# --- BACKEND TOOLS ---
 def get_api_key():
     return st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
 
@@ -133,185 +174,188 @@ def extract_text_from_pdf(file_bytes):
         reader = PdfReader(io.BytesIO(file_bytes))
         text = []
         for page in reader.pages:
-            t = page.extract_text() if page.extract_text() else ""
-            text.append(t)
+            t = page.extract_text()
+            if t: text.append(t)
         return "\n".join(text)
-    except Exception:
-        return ""
+    except Exception as e:
+        return f"Error: {str(e)}"
 
-# --- NAVIGATION HELPERS ---
-# Ces fonctions permettent de changer la page depuis le Dashboard
-def go_to_olivia():
-    st.session_state.nav_selection = "OlivIA (Analysis)"
-
-def go_to_eva():
-    st.session_state.nav_selection = "EVA (Audit)"
-
-# --- PROMPTS ---
+# --- 4. PROMPTS ---
 def prompt_olivia(description, countries, output_lang):
     pays_str = ", ".join(countries)
     return f"""
-    You are OlivIA (VALHALLAI Platform).
-    Product: {description}
-    Markets: {pays_str}
-    Task: List regulatory requirements (Directives, Standards, Documentation, Markings).
-    Output Language: {output_lang}.
-    Format: Markdown Tables. Professional tone.
+    You are OlivIA, expert in regulation (VALHALLAI).
+    Product: {description} | Markets: {pays_str}
+    Mission: List regulatory requirements strictly in {output_lang}.
+    Format: Markdown tables. Be professional and concise.
     """
 
 def prompt_eva(context, doc_text, output_lang):
     return f"""
-    You are EVA (VALHALLAI Platform).
+    You are EVA, quality auditor (VALHALLAI).
     Context: {context}
-    Document content: '''{doc_text[:4000]}'''
-    Task: Verify compliance against context.
-    Output Language: {output_lang}.
-    Format: Start with ✅ COMPLIANT / ⚠️ WARNING / ❌ NON-COMPLIANT. Bullet points.
+    Doc: '''{doc_text[:4000]}'''
+    Mission: Verify compliance in {output_lang}. Start with ✅/⚠️/❌.
     """
 
-# --- MAIN APPLICATION ---
+# --- 5. MAIN APPLICATION ---
+
 def main_app():
     # --- SIDEBAR ---
     with st.sidebar:
-        st.title("VALHALLAI")
-        st.markdown("<div style='margin-top: -20px; color: #558D98; font-size: 0.75rem; letter-spacing: 1px; margin-bottom: 20px;'>REGULATORY SHIELD</div>", unsafe_allow_html=True)
+        st.markdown("## VALHALLAI")
+        st.markdown("<div style='margin-top: -15px; opacity: 0.7; font-size: 0.8rem; letter-spacing: 1px;'>REGULATORY SHIELD</div>", unsafe_allow_html=True)
+        st.markdown("---")
         
-        # Initialisation de la navigation par défaut
-        if "nav_selection" not in st.session_state:
-            st.session_state.nav_selection = "Dashboard"
-
-        # LE MENU PRO (Styled Radio)
-        # On utilise "key" pour lier ce widget au session_state
-        mode = st.radio(
-            "Navigation",
-            ["Dashboard", "OlivIA (Analysis)", "EVA (Audit)"],
-            key="nav_selection", # C'est ici que la magie opère pour la synchro
+        # NAVIGATION "PRO" (Sans bulles grâce au CSS)
+        # On utilise l'index pour synchroniser avec les boutons du dashboard
+        pages_list = ["Dashboard", "OlivIA", "EVA"]
+        
+        # Petite sécurité si l'état est invalide
+        if st.session_state["current_page"] not in pages_list:
+            st.session_state["current_page"] = "Dashboard"
+            
+        current_index = pages_list.index(st.session_state["current_page"])
+        
+        selected_page = st.radio(
+            "NAVIGATION", 
+            pages_list,
+            index=current_index,
             label_visibility="collapsed"
         )
         
+        # Mise à jour de l'état si on clique dans la sidebar
+        if selected_page != st.session_state["current_page"]:
+            st.session_state["current_page"] = selected_page
+            st.rerun()
+
         st.markdown("---")
-        st.caption("Secure Connection 🔒")
+        
+        # DARK MODE TOGGLE
+        col_dark, col_lbl = st.columns([1, 4])
+        with col_dark:
+            # Checkbox simple pour le toggle
+            is_dark = st.checkbox("", value=st.session_state["dark_mode"])
+        with col_lbl:
+            st.write("Night Mode")
+            
+        if is_dark != st.session_state["dark_mode"]:
+            st.session_state["dark_mode"] = is_dark
+            st.rerun()
+
+        st.markdown("---")
         if st.button("Log Out"):
             logout()
+            st.rerun()
 
-    # --- API CHECK ---
+    # --- API CLIENT ---
     api_key = get_api_key()
     client = OpenAI(api_key=api_key) if api_key else None
 
-    # --- DASHBOARD ---
-    if mode == "Dashboard":
-        st.markdown("# Welcome back.")
-        st.markdown("<span style='color:#C8A951; font-weight:600'>Simplify today, amplify tomorrow.</span>", unsafe_allow_html=True)
-        st.markdown("###")
-
-        # Layout Cartes Interactives
-        c1, c2 = st.columns(2)
-        
-        with c1:
-            st.markdown("""
-            <div class="dashboard-btn-container">
-                <h3 style="margin:0">🤖 OlivIA</h3>
-                <p style="color:#666; font-size:0.9rem;">Regulatory Intelligence Engine</p>
-                <p>Define product DNA and map global requirements.</p>
-            </div>
-            """, unsafe_allow_html=True)
-            # Bouton invisible qui couvre la zone visuelle ou bouton standard en dessous
-            st.button("Launch OlivIA Analysis →", on_click=go_to_olivia, use_container_width=True)
-
-        with c2:
-            st.markdown("""
-            <div class="dashboard-btn-container">
-                <h3 style="margin:0">🔍 EVA</h3>
-                <p style="color:#666; font-size:0.9rem;">Compliance Verification</p>
-                <p>Upload PDFs and audit them against regulations.</p>
-            </div>
-            """, unsafe_allow_html=True)
-            st.button("Launch EVA Audit →", on_click=go_to_eva, use_container_width=True)
-
-    # --- OLIVIA ---
-    elif mode == "OlivIA (Analysis)":
-        st.title("OlivIA Workspace")
-        st.caption("ANALYSE RÉGLEMENTAIRE")
-        st.markdown("---")
-        
-        c1, c2 = st.columns([2,1])
-        with c1:
-            desc = st.text_area("Product Description", height=200, placeholder="Ex: Class IIa Medical Device, Bluetooth Low Energy...")
-        with c2:
-            countries = st.multiselect("Target Markets", ["EU (CE)", "USA (FDA)", "UK (UKCA)", "China"], default=["EU (CE)"])
-            output_lang = st.selectbox("Report Language", ["English", "French"])
-            st.markdown("###")
-            run_btn = st.button("Generate Requirements", type="primary", use_container_width=True)
-
-        if run_btn:
-            if not client or not desc:
-                st.warning("Please provide description and API Key.")
-            else:
-                with st.spinner("OlivIA is thinking..."):
-                    try:
-                        res = client.chat.completions.create(
-                            model="gpt-4o",
-                            messages=[{"role":"user", "content":prompt_olivia(desc, countries, output_lang)}],
-                            temperature=0.1
-                        )
-                        st.session_state["olivia_result"] = res.choices[0].message.content
-                        st.rerun()
-                    except Exception as e: st.error(str(e))
-
-        if "olivia_result" in st.session_state:
-            st.markdown("###")
-            st.success("Analysis Generated")
-            st.markdown(st.session_state["olivia_result"])
-
-    # --- EVA ---
-    elif mode == "EVA (Audit)":
-        st.title("EVA Workspace")
-        st.caption("AUDIT DOCUMENTAIRE")
-        st.markdown("---")
-
-        # Auto-fill context
-        default_ctx = st.session_state.get("olivia_result", "")
-        
-        with st.expander("Context / Requirements", expanded=not bool(default_ctx)):
-            ctx = st.text_area("Paste Requirements here", value=default_ctx, height=150)
-
-        c1, c2 = st.columns([2,1])
-        with c1:
-            f = st.file_uploader("Upload Technical File (PDF)", type="pdf")
-        with c2:
-            lang_eva = st.selectbox("Audit Language", ["English", "French"])
-            st.markdown("###")
-            audit_btn = st.button("Run Compliance Audit", type="primary", use_container_width=True)
-
-        if audit_btn:
-            if not client or not f:
-                st.error("Missing file or API key.")
-            else:
-                with st.spinner("Reading & Analyzing..."):
-                    txt = extract_text_from_pdf(f.read())
-                    try:
-                        res = client.chat.completions.create(
-                            model="gpt-4o",
-                            messages=[{"role":"user", "content":prompt_eva(ctx, txt, lang_eva)}],
-                            temperature=0.1
-                        )
-                        st.markdown("### Audit Report")
-                        st.markdown(res.choices[0].message.content)
-                    except Exception as e: st.error(str(e))
-
-# --- LOGIN ---
-def main():
-    if "authenticated" not in st.session_state:
-        st.session_state["authenticated"] = False
+    # --- PAGES ---
     
+    # 1. DASHBOARD
+    if st.session_state["current_page"] == "Dashboard":
+        st.markdown("# Dashboard")
+        st.markdown(f"**Simplify today, amplify tomorrow.**")
+        st.markdown("---")
+        
+        # Cartes cliquables
+        col1, col2 = st.columns(2)
+        
+        with col1:
+            st.markdown("""
+            <div class="info-card">
+                <h3>🤖 OlivIA</h3>
+                <p>Define product DNA & map regulatory landscape.</p>
+            </div>
+            """, unsafe_allow_html=True)
+            st.write("") # Spacer
+            if st.button("Launch OlivIA Analysis ->"):
+                navigate_to("OlivIA")
+
+        with col2:
+            st.markdown("""
+            <div class="info-card">
+                <h3>🔍 EVA</h3>
+                <p>Audit technical documentation against requirements.</p>
+            </div>
+            """, unsafe_allow_html=True)
+            st.write("") # Spacer
+            if st.button("Launch EVA Audit ->"):
+                navigate_to("EVA")
+
+    # 2. OLIVIA
+    elif st.session_state["current_page"] == "OlivIA":
+        st.title("OlivIA Workspace")
+        st.markdown("Define product parameters to generate requirements.")
+        
+        col1, col2 = st.columns([2, 1])
+        with col1:
+            desc = st.text_area("Product Definition", height=200, placeholder="Ex: Medical device class IIa...")
+        with col2:
+            countries = st.multiselect("Markets", ["EU (CE)", "USA (FDA)", "China", "UK"], default=["EU (CE)"])
+            output_lang = st.selectbox("Output Language", ["English", "French", "German"])
+            st.write("")
+            if st.button("Generate Report", type="primary"):
+                if client and desc:
+                    with st.spinner("Analyzing..."):
+                        try:
+                            response = client.chat.completions.create(
+                                model="gpt-4o", 
+                                messages=[{"role": "user", "content": prompt_olivia(desc, countries, output_lang)}],
+                                temperature=0.1
+                            )
+                            st.session_state["last_olivia_report"] = response.choices[0].message.content
+                            st.rerun()
+                        except Exception as e: st.error(f"Error: {e}")
+
+        if "last_olivia_report" in st.session_state:
+            st.markdown("---")
+            st.success("Analysis Generated")
+            st.markdown(st.session_state["last_olivia_report"])
+
+    # 3. EVA
+    elif st.session_state["current_page"] == "EVA":
+        st.title("EVA Workspace")
+        st.markdown("Verify documentation compliance.")
+        
+        default_ctx = st.session_state.get("last_olivia_report", "")
+        with st.expander("Regulatory Context", expanded=not bool(default_ctx)):
+            context = st.text_area("Requirements", value=default_ctx, height=150)
+            
+        col1, col2 = st.columns([2,1])
+        with col1:
+            uploaded = st.file_uploader("Technical File (PDF)", type="pdf")
+        with col2:
+            lang = st.selectbox("Audit Language", ["English", "French"])
+            st.write("")
+            if st.button("Run Audit", type="primary"):
+                if client and uploaded:
+                    with st.spinner("Auditing..."):
+                        txt = extract_text_from_pdf(uploaded.read())
+                        try:
+                            res = client.chat.completions.create(
+                                model="gpt-4o",
+                                messages=[{"role": "user", "content": prompt_eva(context, txt, lang)}],
+                                temperature=0.1
+                            )
+                            st.markdown("### Audit Results")
+                            st.markdown(res.choices[0].message.content)
+                        except Exception as e: st.error(f"Error: {e}")
+
+# --- ENTRY POINT ---
+
+def main():
     if st.session_state["authenticated"]:
         main_app()
     else:
-        # Centered Login
-        _, c2, _ = st.columns([1,1.5,1])
-        with c2:
-            st.markdown("<br><br><h1 style='text-align:center'>VALHALLAI</h1>", unsafe_allow_html=True)
-            st.text_input("Access Token", type="password", key="password_input", on_change=check_password)
+        # LOGIN SCREEN
+        col1, col2, col3 = st.columns([1, 1.5, 1])
+        with col2:
+            st.markdown("<br><br><br>", unsafe_allow_html=True)
+            st.markdown("<h1 style='text-align: center;'>VALHALLAI</h1>", unsafe_allow_html=True)
+            st.text_input("Security Token", type="password", key="password_input", on_change=check_password)
 
 if __name__ == "__main__":
     main()
