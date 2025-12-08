@@ -4,3 +4,4 @@ pypdf>=3.0.0
 gspread==5.12.0
 fpdf2>=2.7.4
 markdown>=3.4.0
+tavily-python==0.3.0
