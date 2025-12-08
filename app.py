@@ -2,6 +2,7 @@ import streamlit as st
 import os
 import io
 import base64
+import uuid  # <--- Nouveau pour les ID Uniques
 from datetime import datetime
 from openai import OpenAI
 from pypdf import PdfReader
@@ -31,7 +32,9 @@ def init_session_state():
         "current_page": "Dashboard",
         "dark_mode": False,
         "last_olivia_report": None,
+        "last_olivia_id": None, # Stocke l'ID du dernier rapport Olivia
         "last_eva_report": None,
+        "last_eva_id": None, # Stocke l'ID du dernier rapport Eva
         "editing_market_index": None,
     }
     for key, value in defaults.items():
@@ -41,19 +44,17 @@ def init_session_state():
 init_session_state()
 
 # =============================================================================
-# 3. GESTION DES MARCHÉS (GOOGLE SHEETS - ROBUSTE)
+# 3. GESTION DES DONNÉES (GOOGLE SHEETS)
 # =============================================================================
 @st.cache_resource
-def get_gsheet_connection():
-    """Connexion ultra-robuste à Google Sheets qui répare la clé privée."""
+def get_gsheet_workbook():
+    """Retourne le CLASSEUR entier (pour accéder à plusieurs onglets)."""
     try:
         if "service_account" not in st.secrets:
             st.error("⚠️ Secrets 'service_account' not found.")
             return None
             
         sa_secrets = st.secrets["service_account"]
-        
-        # Nettoyage clé privée
         raw_key = sa_secrets.get("private_key", "")
         clean_key = raw_key.replace("\\n", "\n")
         
@@ -76,29 +77,57 @@ def get_gsheet_connection():
         }
 
         gc = gspread.service_account_from_dict(creds_dict)
-        sh = gc.open_by_url(st.secrets["gsheets"]["url"])
-        return sh.sheet1 
+        # Retourne le Workbook entier
+        return gc.open_by_url(st.secrets["gsheets"]["url"])
         
     except Exception as e:
         st.error(f"❌ Google Sheets Connection Error: {e}")
         return None
 
+def get_markets_sheet():
+    """Helper pour récupérer l'onglet principal (Marchés)."""
+    wb = get_gsheet_workbook()
+    return wb.sheet1 if wb else None
+
+def log_usage(report_type, report_id, details=""):
+    """Enregistre l'activité dans l'onglet 'Logs'."""
+    wb = get_gsheet_workbook()
+    if not wb: return
+
+    try:
+        # Essayer de récupérer l'onglet 'Logs', sinon le créer
+        try:
+            log_sheet = wb.worksheet("Logs")
+        except:
+            log_sheet = wb.add_worksheet(title="Logs", rows=1000, cols=5)
+            log_sheet.append_row(["Date", "Time", "Report ID", "Type", "Details"]) # Header
+
+        # Données à logger
+        now = datetime.now()
+        row = [
+            now.strftime("%Y-%m-%d"),
+            now.strftime("%H:%M:%S"),
+            report_id,
+            report_type,
+            details
+        ]
+        log_sheet.append_row(row)
+        
+    except Exception as e:
+        print(f"Logging failed: {e}") # On n'affiche pas l'erreur à l'user pour ne pas bloquer
+
 def get_markets():
-    """Lit la liste des marchés depuis le Sheet."""
-    sheet = get_gsheet_connection()
+    sheet = get_markets_sheet()
     if sheet:
         try:
             vals = sheet.col_values(1)
-            # Retourne un tuple : (Liste, est_live=True)
             return (vals if vals else []), True
         except:
-            # Retourne un tuple : (Defaut, est_live=False)
             return config.DEFAULT_MARKETS, False
     return config.DEFAULT_MARKETS, False
 
 def add_market(market_name):
-    """Ajoute un marché dans le Sheet."""
-    sheet = get_gsheet_connection()
+    sheet = get_markets_sheet()
     if sheet:
         try:
             current = sheet.col_values(1)
@@ -111,8 +140,7 @@ def add_market(market_name):
     return False
 
 def remove_market(index):
-    """Supprime un marché du Sheet."""
-    sheet = get_gsheet_connection()
+    sheet = get_markets_sheet()
     if sheet:
         try:
             sheet.delete_rows(index + 1)
@@ -121,8 +149,7 @@ def remove_market(index):
             st.error(f"Delete Error: {e}")
 
 def update_market(index, new_name):
-    """Renomme un marché."""
-    sheet = get_gsheet_connection()
+    sheet = get_markets_sheet()
     if sheet:
         try:
             sheet.update_cell(index + 1, 1, new_name)
@@ -247,22 +274,21 @@ def page_admin():
         return
     
     # 1. Connection Status & Refresh
-    sheet = get_gsheet_connection()
+    wb = get_gsheet_workbook()
     col_status, col_refresh = st.columns([3, 1])
     
     with col_status:
-        if sheet:
-            st.success(f"✅ Database Connected: {sheet.title}")
+        if wb:
+            st.success(f"✅ Database Connected: {wb.title}")
         else:
             st.error("❌ Connection Failed. Check Secrets.")
             
     with col_refresh:
-        # Bouton pour forcer la synchro
         if st.button("🔄 Force Refresh"):
             st.cache_data.clear()
             st.rerun()
 
-    # 2. Get Data
+    # 2. Get Data (Markets)
     current_markets, is_live = get_markets()
     
     if not is_live:
@@ -303,7 +329,6 @@ def page_olivia():
     agent = config.AGENTS["olivia"]
     st.title(f"{agent['icon']} {agent['name']} Workspace")
     
-    # Récupération des marchés (on ne prend que la liste, pas le booléen)
     available_markets, _ = get_markets()
     
     col1, col2 = st.columns([2, 1])
@@ -317,12 +342,20 @@ def page_olivia():
             if client and desc:
                 with st.spinner("Analyzing..."):
                     try:
+                        # 1. Génération IA
                         res = client.chat.completions.create(
                             model=config.OPENAI_MODEL,
                             messages=[{"role": "user", "content": create_olivia_prompt(desc, countries)}],
                             temperature=config.OPENAI_TEMPERATURE
                         )
                         st.session_state["last_olivia_report"] = res.choices[0].message.content
+                        
+                        # 2. Création ID Unique & Logging
+                        new_id = str(uuid.uuid4())
+                        st.session_state["last_olivia_id"] = new_id
+                        
+                        log_usage("OlivIA", new_id, f"Product: {desc[:20]}... | Mkts: {len(countries)}")
+                        
                         st.rerun()
                     except Exception as e: st.error(str(e))
     
@@ -333,12 +366,15 @@ def page_olivia():
         
         st.markdown("---")
         
+        # Bouton export PDF
         timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
         file_name = f"VALHALLAI_Report_{timestamp}.pdf"
+        report_id = st.session_state.get("last_olivia_id", "Unknown-ID")
         
         col_space, col_btn = st.columns([4, 1])
         with col_btn:
-            pdf_data = generate_pdf_report("Regulatory Analysis Report", st.session_state["last_olivia_report"])
+            # On passe l'ID au générateur PDF
+            pdf_data = generate_pdf_report("Regulatory Analysis Report", st.session_state["last_olivia_report"], report_id)
             st.download_button(
                 label="📥 Download PDF",
                 data=pdf_data,
@@ -372,12 +408,19 @@ def page_eva():
             with st.spinner("Auditing..."):
                 txt = extract_text_from_pdf(up.read())
                 try:
+                    # 1. IA
                     res = client.chat.completions.create(
                         model="gpt-4o", 
                         messages=[{"role":"user","content":create_eva_prompt(ctx,txt)}], 
                         temperature=config.OPENAI_TEMPERATURE
                     )
                     st.session_state["last_eva_report"] = res.choices[0].message.content
+                    
+                    # 2. ID & Log
+                    new_id = str(uuid.uuid4())
+                    st.session_state["last_eva_id"] = new_id
+                    log_usage("EVA", new_id, f"File: {up.name}")
+                    
                 except Exception as e: st.error(str(e))
 
     if st.session_state.get("last_eva_report"):
@@ -388,10 +431,12 @@ def page_eva():
         
         timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
         file_name = f"VALHALLAI_Audit_{timestamp}.pdf"
+        report_id = st.session_state.get("last_eva_id", "Unknown-ID")
         
         col_space, col_btn = st.columns([4, 1])
         with col_btn:
-            pdf_data = generate_pdf_report("Compliance Audit Report", st.session_state["last_eva_report"])
+            # On passe l'ID au générateur PDF
+            pdf_data = generate_pdf_report("Compliance Audit Report", st.session_state["last_eva_report"], report_id)
             st.download_button(
                 label="📥 Download PDF",
                 data=pdf_data,
