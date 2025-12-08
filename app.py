@@ -7,6 +7,7 @@ from datetime import datetime
 from openai import OpenAI
 from pypdf import PdfReader
 import gspread 
+from tavily import TavilyClient  # <--- Le moteur de recherche
 
 # Imports locaux
 import config
@@ -88,7 +89,11 @@ def get_markets_sheet():
     return wb.sheet1 if wb else None
 
 def log_usage(report_type, report_id, details="", extra_metrics=""):
-    """Enregistre l'activité dans l'onglet 'Logs'."""
+    """
+    Enregistre l'activité dans l'onglet 'Logs'.
+    - details (Col E) : Description produit ou nom fichier
+    - extra_metrics (Col F) : Nombre de marchés, Web Search utilisé, etc.
+    """
     wb = get_gsheet_workbook()
     if not wb: return
 
@@ -96,6 +101,7 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
         try:
             log_sheet = wb.worksheet("Logs")
         except:
+            # Création si inexistant
             log_sheet = wb.add_worksheet(title="Logs", rows=1000, cols=6)
             log_sheet.append_row(["Date", "Time", "Report ID", "Type", "Details", "Metrics"])
 
@@ -105,8 +111,8 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
             now.strftime("%H:%M:%S"),
             report_id,
             report_type,
-            details,
-            extra_metrics
+            details,        # Col E
+            extra_metrics   # Col F
         ]
         log_sheet.append_row(row)
         
@@ -155,7 +161,7 @@ def update_market(index, new_name):
             st.error(f"Update Error: {e}")
 
 # =============================================================================
-# 4. FONCTIONS UTILITAIRES
+# 4. FONCTIONS UTILITAIRES & DEEP SEARCH
 # =============================================================================
 def navigate_to(page_name):
     st.session_state["current_page"] = page_name
@@ -169,6 +175,31 @@ def get_openai_client():
     if api_key:
         return OpenAI(api_key=api_key)
     return None
+
+def run_deep_search(query):
+    """Exécute une recherche web via Tavily (pour le RAG)."""
+    try:
+        tavily_key = st.secrets.get("TAVILY_API_KEY")
+        if not tavily_key:
+            return None, "Tavily Key Missing"
+            
+        tavily = TavilyClient(api_key=tavily_key)
+        
+        # Recherche contextuelle
+        response = tavily.search(
+            query=query,
+            search_depth="advanced",
+            max_results=3,
+            include_domains=["europa.eu", "fda.gov", "iso.org", "gov.uk", "reuters.com"] 
+        )
+        
+        context_text = "### LIVE REGULATORY DATA (FROM WEB):\n"
+        for result in response['results']:
+            context_text += f"- SOURCE: {result['title']}\n  URL: {result['url']}\n  CONTENT: {result['content'][:600]}...\n\n"
+            
+        return context_text, None
+    except Exception as e:
+        return None, str(e)
 
 def extract_text_from_pdf(file_bytes):
     try:
@@ -213,7 +244,7 @@ def logout():
     st.session_state["current_page"] = "Dashboard"
 
 # =============================================================================
-# 6. PROMPTS IA (EXPERT LEVEL) & UI HELPERS
+# 6. PROMPTS IA (EXPERT LEVEL)
 # =============================================================================
 def create_olivia_prompt(description, countries):
     markets_str = ", ".join(countries)
@@ -248,7 +279,7 @@ def create_olivia_prompt(description, countries):
     | ... | ... | ... |
     
     ## 5. Technical Documentation & Labeling
-    Bullet points list of required documents (e.g., Technical File, DoC, IFU) and specific labeling symbols required (CE, WEEE, UKCA, etc.).
+    Bullet points list of required documents (e.g., Technical File, DoC, IFU) and specific labeling symbols required.
     
     ## 6. Action Plan
     A numbered list of 5-7 concrete steps the user must take next.
@@ -297,10 +328,9 @@ def create_eva_prompt(context, doc_text):
     - Language: STRICTLY ENGLISH.
     - Translate all headers/titles to English.
     - Be strict: If evidence is vague, mark it as ⚠️.
-    - Reference specific parts of the text when possible.
     """
 
-# --- FONCTIONS VISUELLES RESTAURÉES ---
+# --- FONCTIONS VISUELLES ---
 def get_logo_svg():
     colors = config.COLORS["dark" if st.session_state["dark_mode"] else "light"]
     c1, c2 = colors["primary"], colors["accent"]
@@ -397,18 +427,42 @@ def page_olivia():
         if st.button("Generate Report", type="primary"):
             client = get_openai_client()
             if client and desc:
-                with st.spinner("Analyzing..."):
+                # 1. LOGIQUE HYBRIDE : DEEP SEARCH
+                # On active la recherche pour les marchés complexes
+                target_regions = ["EU", "USA", "China", "UK"]
+                use_deep_search = any(r in str(countries) for r in target_regions)
+                deep_context = ""
+                
+                status_msg = "Analyzing... 🌍 Deep Search Active" if use_deep_search else "Analyzing..."
+                
+                with st.spinner(status_msg):
                     try:
+                        # Etape A : Recherche Web (Tavily)
+                        if use_deep_search:
+                            search_q = f"Latest regulatory requirements standards for {desc} in {', '.join(countries)}"
+                            web_data, error = run_deep_search(search_q)
+                            if web_data: deep_context = web_data
+                        
+                        # Etape B : Construction du Prompt Final
+                        final_prompt = create_olivia_prompt(desc, countries)
+                        if deep_context:
+                            final_prompt += f"\n\n[IMPORTANT] USE THIS REAL-TIME WEB DATA TO CITE REGULATIONS:\n{deep_context}"
+
+                        # Etape C : Appel GPT-4o
                         res = client.chat.completions.create(
                             model=config.OPENAI_MODEL,
-                            messages=[{"role": "user", "content": create_olivia_prompt(desc, countries)}],
+                            messages=[{"role": "user", "content": final_prompt}],
                             temperature=config.OPENAI_TEMPERATURE
                         )
                         st.session_state["last_olivia_report"] = res.choices[0].message.content
                         
+                        # Etape D : Logging & ID
                         new_id = str(uuid.uuid4())
                         st.session_state["last_olivia_id"] = new_id
-                        log_usage("OlivIA", new_id, desc, f"Mkts: {len(countries)}")
+                        
+                        log_meta = f"Mkts: {len(countries)} | Web: {'YES' if deep_context else 'NO'}"
+                        log_usage("OlivIA", new_id, desc, log_meta)
+                        
                         st.rerun()
                     except Exception as e: st.error(str(e))
     
