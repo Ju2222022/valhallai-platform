@@ -97,7 +97,6 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
         try: log_sheet = wb.worksheet("Logs")
         except: log_sheet = wb.add_worksheet(title="Logs", rows=1000, cols=6)
         
-        # Vérification et réparation des en-têtes (évite le décalage colonne E)
         if not log_sheet.cell(1, 1).value:
             log_sheet.update("A1:F1", [["Date", "Time", "Report ID", "Type", "Details", "Metrics"]])
             
@@ -282,20 +281,16 @@ def apply_theme():
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
     .stApp {{ background-color: {c['background']}; font-family: 'Inter', sans-serif; color: {c['text']}; }}
     h1, h2, h3 {{ font-family: 'Montserrat', sans-serif !important; color: {c['primary']} !important; }}
-    
-    /* MODIFICATION CSS POUR ALIGNEMENT PARFAIT DES CARTES */
     .info-card {{ 
         background-color: {c['card']}; 
         padding: 2rem; 
         border-radius: 12px; 
         border: 1px solid {c['border']}; 
-        /* Hauteur fixe minimale pour garantir l'alignement */
-        min-height: 220px; 
+        min-height: 220px; /* ALIGNEMENT HAUTEUR */
         display: flex;
         flex-direction: column;
         justify-content: flex-start;
     }}
-    
     .logo-text {{ font-family: 'Montserrat', sans-serif; font-weight: 700; font-size: 1.4rem; color: {c['text']}; }}
     .logo-sub {{ font-size: 0.7rem; letter-spacing: 2px; text-transform: uppercase; color: {c['text_secondary']}; font-weight: 500; }}
     div.stButton > button:first-child {{ background-color: {c['primary']} !important; color: {c['button_text']} !important; border-radius: 8px; font-weight: 600; width: 100%;}}
@@ -471,15 +466,20 @@ def page_dashboard():
     st.markdown(f"<span class='sub-text'>{config.APP_SLOGAN}</span>", unsafe_allow_html=True)
     st.markdown("###")
     c1, c2, c3 = st.columns(3)
+    
+    # CORRECTION : Utilisation de if st.button() au lieu de on_click pour éviter le warning no-op
     with c1: 
         st.markdown(f"""<div class="info-card"><h3>🤖 OlivIA</h3><p class='sub-text'>{config.AGENTS['olivia']['description']}</p></div>""", unsafe_allow_html=True)
-        st.write(""); st.button("Launch OlivIA ->", on_click=navigate_to, args=("OlivIA",))
+        st.write("")
+        if st.button("Launch OlivIA ->"): navigate_to("OlivIA")
     with c2: 
         st.markdown(f"""<div class="info-card"><h3>🔍 EVA</h3><p class='sub-text'>{config.AGENTS['eva']['description']}</p></div>""", unsafe_allow_html=True)
-        st.write(""); st.button("Launch EVA ->", on_click=navigate_to, args=("EVA",))
+        st.write("")
+        if st.button("Launch EVA ->"): navigate_to("EVA")
     with c3: 
         st.markdown(f"""<div class="info-card"><h3>{config.AGENTS['mia']['icon']} {config.AGENTS['mia']['name']}</h3><p class='sub-text'>{config.AGENTS['mia']['description']}</p></div>""", unsafe_allow_html=True)
-        st.write(""); st.button("Launch MIA ->", on_click=navigate_to, args=("MIA",))
+        st.write("")
+        if st.button("Launch MIA ->"): navigate_to("MIA")
 
 def render_sidebar():
     with st.sidebar:
@@ -488,8 +488,7 @@ def render_sidebar():
         st.markdown("---")
         pages = ["Dashboard", "OlivIA", "EVA", "MIA", "Admin"]
         curr = st.session_state["current_page"]
-        idx = pages.index(curr) if curr in pages else 0
-        sel = st.radio("NAV", pages, index=idx)
+        sel = st.radio("NAV", pages, index=pages.index(curr) if curr in pages else 0, label_visibility="collapsed")
         if sel != curr: navigate_to(sel)
         st.markdown("---")
         if st.checkbox("Dark Mode", value=st.session_state["dark_mode"]): st.session_state["dark_mode"]=True; st.rerun()
