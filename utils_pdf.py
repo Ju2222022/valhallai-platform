@@ -2,7 +2,7 @@ import os
 import urllib.request
 from datetime import datetime
 from fpdf import FPDF
-from fpdf.fonts import FontFace  # Nécessaire pour le styling
+from fpdf.fonts import FontFace
 import markdown
 import config
 
@@ -93,17 +93,16 @@ class ValhallaiPDF(FPDF):
             extensions=['tables', 'fenced_code']
         )
 
-        # --- STYLING PERSONNALISÉ (Pour virer le rouge) ---
-        # On force les titres en Vert Valhallai (#295A63)
-        # On force les entêtes de tableaux en fond Vert texte Blanc
+        # --- STYLING CORRIGÉ (Simplifié pour éviter le crash) ---
+        # On ne style que les titres (h1, h2, h3) pour éviter l'erreur NotImplementedError
+        # sur les balises complexes comme 'th' ou 'code'.
         primary_color = (41, 90, 99)
         
         tag_styles = {
             "h1": FontFace(color=primary_color, emphasis="B"),
             "h2": FontFace(color=primary_color, emphasis="B"),
-            "h3": FontFace(color=(26, 60, 66), emphasis="B"), # Darker green
-            "th": FontFace(color=(255, 255, 255), fill_color=primary_color, emphasis="B"),
-            "code": FontFace(color=(200, 169, 81)), # Gold pour le code inline
+            "h3": FontFace(color=(26, 60, 66), emphasis="B"),
+            # J'ai retiré 'th' et 'code' qui causaient le crash
         }
 
         # Écriture du HTML avec styles appliqués
