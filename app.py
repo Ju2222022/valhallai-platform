@@ -190,7 +190,7 @@ def run_deep_search(query):
             query=query,
             search_depth="advanced",
             max_results=3,
-            include_domains=["europa.eu", "fda.gov", "iso.org", "gov.uk", "reuters.com"] 
+            include_domains=["europa.eu", "eur-lex.europa.eu/oj", "fda.gov", "iso.org", "gov.uk", "reuters.com"] 
         )
         
         context_text = "### LIVE REGULATORY DATA (FROM WEB):\n"
