@@ -31,7 +31,7 @@ def init_session_state():
         "current_page": "Dashboard",
         "dark_mode": False,
         "last_olivia_report": None,
-        "last_eva_report": None, # Nouveau pour persistance EVA
+        "last_eva_report": None,
         "editing_market_index": None,
     }
     for key, value in defaults.items():
@@ -53,19 +53,15 @@ def get_gsheet_connection():
             
         sa_secrets = st.secrets["service_account"]
         
-        # --- NETTOYAGE ET RÉPARATION DE LA CLÉ PRIVÉE ---
+        # Nettoyage clé privée
         raw_key = sa_secrets.get("private_key", "")
-        
-        # 1. Gestion des sauts de ligne (littéraux vs réels)
         clean_key = raw_key.replace("\\n", "\n")
         
-        # 2. Vérification et ajout des en-têtes si manquants
         if "-----BEGIN PRIVATE KEY-----" not in clean_key:
             clean_key = "-----BEGIN PRIVATE KEY-----\n" + clean_key.strip()
         if "-----END PRIVATE KEY-----" not in clean_key:
             clean_key = clean_key.strip() + "\n-----END PRIVATE KEY-----"
             
-        # 3. Reconstitution du dictionnaire propre
         creds_dict = {
             "type": sa_secrets["type"],
             "project_id": sa_secrets["project_id"],
@@ -79,7 +75,6 @@ def get_gsheet_connection():
             "client_x509_cert_url": sa_secrets["client_x509_cert_url"]
         }
 
-        # Connexion
         gc = gspread.service_account_from_dict(creds_dict)
         sh = gc.open_by_url(st.secrets["gsheets"]["url"])
         return sh.sheet1 
@@ -194,17 +189,19 @@ def logout():
     st.session_state["current_page"] = "Dashboard"
 
 # =============================================================================
-# 6. PROMPTS IA & UI HELPERS
+# 6. PROMPTS IA (MODIFIÉS POUR ANGLAIS PAR DÉFAUT)
 # =============================================================================
-def create_olivia_prompt(description, countries, output_lang):
+def create_olivia_prompt(description, countries):
+    # Langue retirée des arguments, fixée à "English"
     markets_str = ", ".join(countries)
     return f"""You are OlivIA (VALHALLAI). Product: {description} | Markets: {markets_str}. 
-    Mission: List regulatory requirements strictly in {output_lang}. Translate all headers.
+    Mission: List regulatory requirements strictly in English. Translate all headers to English.
     Format: Markdown tables. Be professional and concise."""
 
-def create_eva_prompt(context, doc_text, output_lang):
+def create_eva_prompt(context, doc_text):
+    # Langue retirée des arguments, fixée à "English"
     return f"""You are EVA (VALHALLAI). Context: {context}. Doc: '''{doc_text[:6000]}'''. 
-    Mission: Verify compliance in {output_lang}. Start with ✅/⚠️/❌."""
+    Mission: Verify compliance in English. Start with ✅/⚠️/❌."""
 
 def get_logo_svg():
     colors = config.COLORS["dark" if st.session_state["dark_mode"] else "light"]
@@ -294,8 +291,9 @@ def page_olivia():
     with col1: desc = st.text_area("Product Definition", height=200, placeholder="Ex: Medical device class IIa...")
     with col2:
         countries = st.multiselect("Target Markets", available_markets, default=[available_markets[0]] if available_markets else None)
-        output_lang = st.selectbox("Language", config.AVAILABLE_LANGUAGES)
+        # Langue supprimée ici (on force l'Anglais en backend)
         
+        st.write("") # Spacer
         if st.button("Generate Report", type="primary"):
             client = get_openai_client()
             if client and desc:
@@ -303,14 +301,14 @@ def page_olivia():
                     try:
                         res = client.chat.completions.create(
                             model=config.OPENAI_MODEL,
-                            messages=[{"role": "user", "content": create_olivia_prompt(desc, countries, output_lang)}],
+                            # Appel sans le paramètre langue
+                            messages=[{"role": "user", "content": create_olivia_prompt(desc, countries)}],
                             temperature=config.OPENAI_TEMPERATURE
                         )
                         st.session_state["last_olivia_report"] = res.choices[0].message.content
                         st.rerun()
                     except Exception as e: st.error(str(e))
     
-    # Affichage du rapport et bouton export
     if st.session_state["last_olivia_report"]:
         st.markdown("---")
         st.success("✅ Analysis Generated Successfully")
@@ -351,7 +349,7 @@ def page_eva():
     st.title("EVA Workspace")
     ctx = st.text_area("Context", value=st.session_state.get("last_olivia_report", ""))
     up = st.file_uploader("PDF", type="pdf")
-    lang = st.selectbox("Audit Language", config.AVAILABLE_LANGUAGES)
+    # Langue supprimée ici aussi
     
     if st.button("Run Audit", type="primary"):
         client = get_openai_client()
@@ -360,13 +358,14 @@ def page_eva():
                 txt = extract_text_from_pdf(up.read())
                 try:
                     res = client.chat.completions.create(
-                        model="gpt-4o", messages=[{"role":"user","content":create_eva_prompt(ctx,txt,lang)}], temperature=config.OPENAI_TEMPERATURE
+                        model="gpt-4o", 
+                        # Appel sans le paramètre langue
+                        messages=[{"role":"user","content":create_eva_prompt(ctx,txt)}], 
+                        temperature=config.OPENAI_TEMPERATURE
                     )
-                    # Persistance du résultat pour ne pas le perdre au refresh du bouton download
                     st.session_state["last_eva_report"] = res.choices[0].message.content
                 except Exception as e: st.error(str(e))
 
-    # Affichage du résultat si disponible
     if st.session_state.get("last_eva_report"):
         st.markdown("### Audit Results")
         st.markdown(st.session_state["last_eva_report"])
