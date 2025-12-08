@@ -218,51 +218,90 @@ def logout():
     st.session_state["current_page"] = "Dashboard"
 
 # =============================================================================
-# 6. PROMPTS IA
+# 6. PROMPTS IA (EXPERT LEVEL)
 # =============================================================================
 def create_olivia_prompt(description, countries):
     markets_str = ", ".join(countries)
-    return f"""You are OlivIA (VALHALLAI). Product: {description} | Markets: {markets_str}. 
-    Mission: List regulatory requirements strictly in English. Translate all headers to English.
-    Format: Markdown tables. Be professional and concise."""
-
-def create_eva_prompt(context, doc_text):
-    return f"""You are EVA (VALHALLAI). Context: {context}. Doc: '''{doc_text[:6000]}'''. 
-    Mission: Verify compliance in English. Start with ✅/⚠️/❌."""
-
-def get_logo_svg():
-    colors = config.COLORS["dark" if st.session_state["dark_mode"] else "light"]
-    c1, c2 = colors["primary"], colors["accent"]
-    c3, c4 = "#1A3C42", "#E6D5A7"
     return f"""
-    <svg width="60" height="60" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <rect x="10" y="10" width="38" height="38" rx="8" fill="{c1}"/>
-        <rect x="52" y="10" width="38" height="38" rx="8" fill="{c2}"/>
-        <rect x="10" y="52" width="38" height="38" rx="8" fill="{c3}"/>
-        <rect x="52" y="52" width="38" height="38" rx="8" fill="{c4}"/>
-    </svg>
+    ROLE: You are OlivIA, a Senior Regulatory Affairs Strategy Consultant at VALHALLAI.
+    
+    INPUT DATA:
+    - Product Description: "{description}"
+    - Target Markets: {markets_str}
+    
+    MISSION:
+    Conduct a comprehensive regulatory landscape analysis. Your goal is to provide a clear roadmap for market entry.
+    
+    STRICT OUTPUT STRUCTURE (Markdown):
+    
+    ## 1. Executive Summary
+    Brief overview of the product classification and complexity level (1 paragraph).
+    
+    ## 2. Product Classification & Pathway
+    For each market, determine the classification (e.g., Class I/II/III for MedTech, or General Consumer Goods) and the required conformity assessment route.
+    
+    ## 3. Applicable Regulations & Directives
+    List the binding laws.
+    | Region | Regulation ID | Title | Key Requirement |
+    |---|---|---|---|
+    | ... | ... | ... | ... |
+    
+    ## 4. Mandatory Standards (The "Technical Core")
+    List specific ISO/IEC/EN standards required for testing.
+    | Standard ID | Title | Type (Safety/EMC/Performance) |
+    |---|---|---|
+    | ... | ... | ... |
+    
+    ## 5. Technical Documentation & Labeling
+    Bullet points list of required documents (e.g., Technical File, DoC, IFU) and specific labeling symbols required (CE, WEEE, UKCA, etc.).
+    
+    ## 6. Action Plan
+    A numbered list of 5-7 concrete steps the user must take next.
+    
+    CONSTRAINTS:
+    - Language: STRICTLY ENGLISH.
+    - Tone: Professional, authoritative, and precise.
+    - No filler text, focus on actionable data.
     """
 
-def get_logo_html():
-    svg = get_logo_svg()
-    b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
-    return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 15px;">'
-
-def apply_theme():
-    mode = "dark" if st.session_state["dark_mode"] else "light"
-    c = config.COLORS[mode]
-    st.markdown(f"""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
-    .stApp {{ background-color: {c['background']}; font-family: 'Inter', sans-serif; color: {c['text']}; }}
-    h1, h2, h3 {{ font-family: 'Montserrat', sans-serif !important; color: {c['primary']} !important; }}
-    .info-card {{ background-color: {c['card']}; padding: 2rem; border-radius: 12px; border: 1px solid {c['border']}; }}
-    .logo-text {{ font-family: 'Montserrat', sans-serif; font-weight: 700; font-size: 1.4rem; color: {c['text']}; }}
-    .logo-sub {{ font-size: 0.7rem; letter-spacing: 2px; text-transform: uppercase; color: {c['text_secondary']}; font-weight: 500; }}
-    div.stButton > button:first-child {{ background-color: {c['primary']} !important; color: {c['button_text']} !important; border-radius: 8px; font-weight: 600; width: 100%;}}
-    </style>
-    """, unsafe_allow_html=True)
-
+def create_eva_prompt(context, doc_text):
+    return f"""
+    ROLE: You are EVA, a Lead Technical Auditor and Compliance Officer at VALHALLAI.
+    
+    INPUT DATA:
+    1. REGULATORY CONTEXT (The Rules):
+    {context}
+    
+    2. TECHNICAL DOCUMENTATION (The Evidence):
+    '''{doc_text[:10000]}''' 
+    (Note: Text truncated for analysis limit)
+    
+    MISSION:
+    Audit the provided documentation against the Regulatory Context. Find gaps, inconsistencies, or missing evidence.
+    
+    STRICT OUTPUT STRUCTURE (Markdown):
+    
+    ## 1. Audit Verdict
+    **Overall Status:** [COMPLIANT / PARTIALLY COMPLIANT / NON-COMPLIANT]
+    Summary of the findings in 2-3 sentences.
+    
+    ## 2. Gap Analysis Table
+    Analyze specific requirements mentioned in the context.
+    | Requirement | Status (✅/⚠️/❌) | Evidence Found in Doc | Missing / Recommendation |
+    |---|---|---|---|
+    | [Requirement Name] | [Icon] | [Quote or Page Ref] | [Action needed] |
+    
+    ## 3. Critical Risks
+    List any blocking issues that prevent market entry immediately.
+    
+    ## 4. Improvement Recommendations
+    Bulleted list of technical improvements for the documentation.
+    
+    CONSTRAINTS:
+    - Language: STRICTLY ENGLISH.
+    - Be strict: If evidence is vague, mark it as ⚠️.
+    - Reference specific parts of the text when possible.
+    """
 # =============================================================================
 # 7. PAGES
 # =============================================================================
