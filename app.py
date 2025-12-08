@@ -53,7 +53,8 @@ def init_session_state():
         "authenticated": False,
         "admin_authenticated": False,
         "current_page": "Dashboard",
-        "dark_mode": False,
+        # MODIFICATION UX : Dark Mode par défaut = True
+        "dark_mode": True, 
         "last_olivia_report": None,
         "last_olivia_id": None, 
         "last_eva_report": None,
@@ -306,23 +307,42 @@ def apply_theme():
     st.markdown(f"""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
+    
+    /* GLOBAL */
     .stApp {{ background-color: {c['background']}; font-family: 'Inter', sans-serif; color: {c['text']}; }}
     h1, h2, h3 {{ font-family: 'Montserrat', sans-serif !important; color: {c['primary']} !important; }}
+    
+    /* SIDEBAR CORRECTION */
+    [data-testid="stSidebar"] {{
+        background-color: {c['card']};
+        border-right: 1px solid {c['border']};
+    }}
+    
+    /* INPUTS & TEXT AREAS (Correction lisibilité) */
+    .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] {{
+        background-color: {c['card']} !important;
+        color: {c['text']} !important;
+        border: 1px solid {c['border']};
+    }}
+    
+    /* INFO CARDS */
     .info-card {{ 
         background-color: {c['card']}; padding: 2rem; border-radius: 12px; border: 1px solid {c['border']}; 
         min-height: 220px; display: flex; flex-direction: column; justify-content: flex-start;
     }}
     .logo-text {{ font-family: 'Montserrat', sans-serif; font-weight: 700; font-size: 1.4rem; color: {c['text']}; }}
     .logo-sub {{ font-size: 0.7rem; letter-spacing: 2px; text-transform: uppercase; color: {c['text_secondary']}; font-weight: 500; }}
+    
+    /* BUTTONS */
     div.stButton > button:first-child {{ background-color: {c['primary']} !important; color: {c['button_text']} !important; border-radius: 8px; font-weight: 600; width: 100%;}}
     
-    /* HARMONISATION COULEURS */
+    /* HARMONISATION COULEURS UI */
     .stMultiSelect span[data-baseweb="tag"] {{ background-color: {c['primary']} !important; color: {c['button_text']} !important; }}
     div[role="radiogroup"] label[data-checked="true"] {{ color: {c['primary']} !important; font-weight: bold !important; }}
     div[data-baseweb="checkbox"] div[aria-checked="true"] {{ background-color: {c['primary']} !important; border-color: {c['primary']} !important; }}
     .stTextInput > div > div[data-baseweb="input"]:focus-within {{ border-color: {c['primary']} !important; box-shadow: 0 0 0 1px {c['primary']} !important; }}
     
-    /* BOUTON FANTÔME POUR LE LOGO (Correctif CSS) */
+    /* BOUTON FANTÔME POUR LE LOGO (Navigation) */
     div[data-testid="stSidebar"] .stButton:first-of-type {{
         position: absolute;
         top: 1rem;
@@ -437,7 +457,6 @@ def page_mia():
             selected_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"])
             
         with c_legend:
-            # Spacer pour aligner verticalement avec les boîtes de saisie
             st.write("") 
             st.write("")
             st.markdown(
@@ -591,12 +610,14 @@ def render_sidebar():
         if st.button("Log Out"): logout(); st.rerun()
 
 def render_login():
-    c1, c2, c3 = st.columns([1, 1.5, 1])
+    # CENTRAGE DU LOGIN
+    c1, c2, c3 = st.columns([1, 2, 1]) # Colonne centrale plus large
     with c2:
-        st.markdown("<br><br>", unsafe_allow_html=True)
-        st.markdown(get_logo_html(), unsafe_allow_html=True)
-        st.title(config.APP_NAME)
-        st.text_input("Token", type="password", key="password_input", on_change=check_password)
+        st.markdown("<br><br><br>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align:center'>{get_logo_html()}</div>", unsafe_allow_html=True)
+        st.markdown(f"<h1 style='text-align: center; color: #295A63;'>{config.APP_NAME}</h1>", unsafe_allow_html=True)
+        st.markdown(f"<p style='text-align: center; color: #666;'>{config.APP_TAGLINE}</p>", unsafe_allow_html=True)
+        st.text_input("Security Token", type="password", key="password_input", on_change=check_password)
 
 def main():
     apply_theme()
