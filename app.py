@@ -2,7 +2,7 @@ import streamlit as st
 import os
 import io
 import base64
-import uuid  # <--- Nouveau pour les ID Uniques
+import uuid
 from datetime import datetime
 from openai import OpenAI
 from pypdf import PdfReader
@@ -32,9 +32,9 @@ def init_session_state():
         "current_page": "Dashboard",
         "dark_mode": False,
         "last_olivia_report": None,
-        "last_olivia_id": None, # Stocke l'ID du dernier rapport Olivia
+        "last_olivia_id": None, 
         "last_eva_report": None,
-        "last_eva_id": None, # Stocke l'ID du dernier rapport Eva
+        "last_eva_id": None,
         "editing_market_index": None,
     }
     for key, value in defaults.items():
@@ -48,7 +48,7 @@ init_session_state()
 # =============================================================================
 @st.cache_resource
 def get_gsheet_workbook():
-    """Retourne le CLASSEUR entier (pour accéder à plusieurs onglets)."""
+    """Retourne le CLASSEUR entier."""
     try:
         if "service_account" not in st.secrets:
             st.error("⚠️ Secrets 'service_account' not found.")
@@ -77,7 +77,6 @@ def get_gsheet_workbook():
         }
 
         gc = gspread.service_account_from_dict(creds_dict)
-        # Retourne le Workbook entier
         return gc.open_by_url(st.secrets["gsheets"]["url"])
         
     except Exception as e:
@@ -85,36 +84,39 @@ def get_gsheet_workbook():
         return None
 
 def get_markets_sheet():
-    """Helper pour récupérer l'onglet principal (Marchés)."""
     wb = get_gsheet_workbook()
     return wb.sheet1 if wb else None
 
-def log_usage(report_type, report_id, details=""):
-    """Enregistre l'activité dans l'onglet 'Logs'."""
+def log_usage(report_type, report_id, details="", extra_metrics=""):
+    """
+    Enregistre l'activité dans l'onglet 'Logs'.
+    - details (Col E) : Description produit ou nom fichier
+    - extra_metrics (Col F) : Nombre de marchés, etc.
+    """
     wb = get_gsheet_workbook()
     if not wb: return
 
     try:
-        # Essayer de récupérer l'onglet 'Logs', sinon le créer
         try:
             log_sheet = wb.worksheet("Logs")
         except:
-            log_sheet = wb.add_worksheet(title="Logs", rows=1000, cols=5)
-            log_sheet.append_row(["Date", "Time", "Report ID", "Type", "Details"]) # Header
+            # Création si inexistant (6 colonnes maintenant)
+            log_sheet = wb.add_worksheet(title="Logs", rows=1000, cols=6)
+            log_sheet.append_row(["Date", "Time", "Report ID", "Type", "Details", "Metrics"])
 
-        # Données à logger
         now = datetime.now()
         row = [
             now.strftime("%Y-%m-%d"),
             now.strftime("%H:%M:%S"),
             report_id,
             report_type,
-            details
+            details,        # Colonne E
+            extra_metrics   # Colonne F
         ]
         log_sheet.append_row(row)
         
     except Exception as e:
-        print(f"Logging failed: {e}") # On n'affiche pas l'erreur à l'user pour ne pas bloquer
+        print(f"Logging failed: {e}")
 
 def get_markets():
     sheet = get_markets_sheet()
@@ -350,11 +352,12 @@ def page_olivia():
                         )
                         st.session_state["last_olivia_report"] = res.choices[0].message.content
                         
-                        # 2. Création ID Unique & Logging
+                        # 2. Création ID Unique & Logging (MODIFIÉ ICI)
                         new_id = str(uuid.uuid4())
                         st.session_state["last_olivia_id"] = new_id
                         
-                        log_usage("OlivIA", new_id, f"Product: {desc[:20]}... | Mkts: {len(countries)}")
+                        # LOG: Col E = Produit, Col F = Nombre de marchés
+                        log_usage("OlivIA", new_id, desc, f"Mkts: {len(countries)}")
                         
                         st.rerun()
                     except Exception as e: st.error(str(e))
@@ -366,14 +369,12 @@ def page_olivia():
         
         st.markdown("---")
         
-        # Bouton export PDF
         timestamp = datetime.now().strftime("%Y-%m-%d_%H%M")
         file_name = f"VALHALLAI_Report_{timestamp}.pdf"
         report_id = st.session_state.get("last_olivia_id", "Unknown-ID")
         
         col_space, col_btn = st.columns([4, 1])
         with col_btn:
-            # On passe l'ID au générateur PDF
             pdf_data = generate_pdf_report("Regulatory Analysis Report", st.session_state["last_olivia_report"], report_id)
             st.download_button(
                 label="📥 Download PDF",
@@ -416,10 +417,12 @@ def page_eva():
                     )
                     st.session_state["last_eva_report"] = res.choices[0].message.content
                     
-                    # 2. ID & Log
+                    # 2. ID & Log (MODIFIÉ ICI)
                     new_id = str(uuid.uuid4())
                     st.session_state["last_eva_id"] = new_id
-                    log_usage("EVA", new_id, f"File: {up.name}")
+                    
+                    # LOG: Col E = Nom Fichier, Col F = N/A
+                    log_usage("EVA", new_id, f"File: {up.name}", "N/A")
                     
                 except Exception as e: st.error(str(e))
 
@@ -435,7 +438,6 @@ def page_eva():
         
         col_space, col_btn = st.columns([4, 1])
         with col_btn:
-            # On passe l'ID au générateur PDF
             pdf_data = generate_pdf_report("Compliance Audit Report", st.session_state["last_eva_report"], report_id)
             st.download_button(
                 label="📥 Download PDF",
