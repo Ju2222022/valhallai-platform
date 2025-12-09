@@ -327,12 +327,29 @@ def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     CONTEXT: User monitoring: "{topic}" | Markets: {', '.join(markets)}
     SELECTED TIMEFRAME: {timeframe_label}
     RAW SEARCH DATA: {raw_search_data}
-    MISSION: Filter raw data. Keep only relevant updates.
+    
+    MISSION:
+    1. ANALYZE dates carefully. 
+       - If the user selected "Last 30 Days", ONLY keep updates where the regulation/news ITSELF happened in the last 30 days.
+       - Ignore old regulations that are just being discussed in a recent article (unless there is a NEW amendment or enforcement).
+    2. Filter raw data to keep only RELEVANT updates matching the timeframe.
+    3. Analyze Impact (High/Medium/Low).
+    4. CLASSIFY each item into: "Regulation", "Standard", "Guidance", "Enforcement", "News".
+    
     OUTPUT FORMAT (Strict JSON):
     {{
-        "executive_summary": "Summary...",
+        "executive_summary": "Summary of the activity specifically during {timeframe_label}...",
         "items": [
-            {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["Tag1"], "impact": "High/Medium/Low", "category": "Regulation" }}
+            {{ 
+                "title": "...", 
+                "date": "YYYY-MM-DD", 
+                "source_name": "...", 
+                "url": "...", 
+                "summary": "...", 
+                "tags": ["Tag1"], 
+                "impact": "High/Medium/Low", 
+                "category": "Regulation"
+            }}
         ]
     }}
     """
