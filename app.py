@@ -61,7 +61,7 @@ def init_session_state():
         "mia_topic_val": "",
         "mia_markets_val": [],
         "mia_timeframe_index": 1,
-        "current_watchlist": None, # Pour éviter le re-toast en boucle
+        "current_watchlist": None,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -411,25 +411,38 @@ def page_admin():
 def page_mia():
     st.title("📡 MIA Watch Tower"); st.markdown("---")
     
-    # 1. Gestion des Watchlists
-    watchlists = get_watchlists()
-    wl_names = ["-- New Watch --"] + [w["name"] for w in watchlists]
-    
-    selected_wl = st.selectbox("📂 Load Saved Watchlist", wl_names)
-    
-    # Chargement
-    if selected_wl != "-- New Watch --" and st.session_state.get("current_watchlist") != selected_wl:
-        wl_data = next((w for w in watchlists if w["name"] == selected_wl), None)
-        if wl_data:
-            st.session_state["mia_topic_val"] = wl_data["topic"]
-            st.session_state["mia_markets_val"] = [m.strip() for m in wl_data["markets"].split(",")]
-            timeframe_map = {"⚡ Last 30 Days": 30, "📅 Last 12 Months": 365, "🏛️ Last 3 Years": 1095}
-            try:
-                st.session_state["mia_timeframe_index"] = list(timeframe_map.keys()).index(wl_data["timeframe"])
-            except: st.session_state["mia_timeframe_index"] = 1
+    # --- ZONE WATCHLIST DANS UN EXPANDER DISCRET ---
+    with st.expander("📂 Manage Watchlists (Load / Save)", expanded=False):
+        watchlists = get_watchlists()
+        wl_names = ["-- Select --"] + [w["name"] for w in watchlists]
+        
+        c_load, c_action = st.columns([3, 1])
+        with c_load:
+            selected_wl = st.selectbox("Load Watchlist", wl_names, label_visibility="collapsed")
+        
+        if selected_wl != "-- Select --":
+            # Logique de chargement
+            if st.session_state.get("current_watchlist") != selected_wl:
+                wl_data = next((w for w in watchlists if w["name"] == selected_wl), None)
+                if wl_data:
+                    st.session_state["mia_topic_val"] = wl_data["topic"]
+                    st.session_state["mia_markets_val"] = [m.strip() for m in wl_data["markets"].split(",")]
+                    timeframe_map = {"⚡ Last 30 Days": 30, "📅 Last 12 Months": 365, "🏛️ Last 3 Years": 1095}
+                    try:
+                        st.session_state["mia_timeframe_index"] = list(timeframe_map.keys()).index(wl_data["timeframe"])
+                    except: st.session_state["mia_timeframe_index"] = 1
+                    
+                    st.session_state["current_watchlist"] = selected_wl
+                    st.toast(f"✅ Loaded: {selected_wl}")
             
-            st.session_state["current_watchlist"] = selected_wl # Marqueur pour ne pas re-toaster
-            st.toast(f"✅ Watch loaded: {selected_wl}")
+            # Bouton suppression
+            with c_action:
+                if st.button("🗑️ Delete", type="secondary"):
+                    wl_to_del = next((w for w in watchlists if w["name"] == selected_wl), None)
+                    if wl_to_del and delete_watchlist(wl_to_del["id"]):
+                         st.success("Deleted.")
+                         st.cache_data.clear()
+                         st.rerun()
 
     # 2. Formulaire
     markets, _ = get_markets()
@@ -459,25 +472,14 @@ def page_mia():
         )
         days_limit = timeframe_map[selected_label]
 
-    # Bouton Launch dynamique
-    launch_label = f"🚀 Launch {selected_wl}" if selected_wl != "-- New Watch --" else "🚀 Launch Monitoring"
+    # Bouton Launch
+    launch_label = f"🚀 Launch {selected_wl}" if selected_wl != "-- Select --" else "🚀 Launch Monitoring"
     
     c_launch, c_save = st.columns([1, 4])
     with c_launch:
         launch = st.button(launch_label, type="primary")
-    
-    with c_save:
-        # Save Button (Visible uniquement si topic rempli)
-        if topic:
-            with st.popover("💾 Save as Watchlist"):
-                new_wl_name = st.text_input("Name", placeholder="e.g. Monthly Cardio Watch")
-                if st.button("Save"):
-                    if new_wl_name:
-                        save_watchlist(new_wl_name, topic, selected_markets, selected_label)
-                        st.success("Saved!")
-                        st.cache_data.clear()
-                        st.rerun()
 
+    # Exécution
     if launch and topic:
         with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
             clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
@@ -487,19 +489,42 @@ def page_mia():
             else:
                 prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
                 json_str = cached_ai_generation(prompt, config.OPENAI_MODEL, 0.1, json_mode=True)
-                if json_str:
-                    st.session_state["last_mia_results"] = json.loads(json_str)
+                
+                # --- SANITIZATION DES DONNÉES (CORRECTION CRASH) ---
+                try:
+                    parsed_data = json.loads(json_str)
+                    # On vérifie que la structure est bonne
+                    if "items" not in parsed_data: parsed_data["items"] = []
+                    # On nettoie chaque item
+                    for item in parsed_data["items"]:
+                        if "impact" not in item: item["impact"] = "Low"
+                        if "category" not in item: item["category"] = "News"
+                        item["impact"] = item["impact"].capitalize()
+                        item["category"] = item["category"].capitalize()
+                    
+                    st.session_state["last_mia_results"] = parsed_data
                     log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
-                else: st.error("Analysis failed.")
+                except Exception as e:
+                    st.error(f"Data processing failed: {str(e)}")
 
     results = st.session_state.get("last_mia_results")
     if results:
+        # Zone de Sauvegarde (Apparaît après résultat)
+        with c_save:
+            with st.popover("💾 Save as Watchlist"):
+                new_wl_name = st.text_input("Name your watchlist", placeholder="e.g. Monthly Cardio Watch")
+                if st.button("Save Configuration"):
+                    if new_wl_name and topic:
+                        save_watchlist(new_wl_name, topic, selected_markets, selected_label)
+                        st.toast("Watchlist Saved!", icon="💾")
+                        st.cache_data.clear()
+
         st.markdown("### 📋 Monitoring Report")
         
         # Résumé Justifié
         summary = results.get('executive_summary', 'No summary.')
         st.markdown(f"""<div class="justified-text"><strong>Executive Summary:</strong> {summary}</div>""", unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True) # Espacement
+        st.markdown("<br>", unsafe_allow_html=True)
 
         # Filtres
         c_filter1, c_filter2, c_legend = st.columns([2, 2, 1], gap="large")
@@ -510,22 +535,25 @@ def page_mia():
             sel_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"])
         with c_legend:
             st.write(""); st.write("")
-            st.markdown("<div><span style='color:#e53935'>●</span> High <span style='color:#fb8c00'>●</span> Medium <span style='color:#43a047'>●</span> Low <br><span style='font-size:0.8em; color:gray'>📅 Dates = Publication</span></div>", unsafe_allow_html=True)
+            st.markdown("<div><span style='color:#e53935'>●</span> High <span style='color:#fb8c00'>●</span> Medium <span style='color:#43a047'>●</span> Low <br><span style='font-size:0.8em; color:gray'>📅 Dates refer to publication date</span></div>", unsafe_allow_html=True)
         
         st.markdown("---")
         
         items = results.get("items", [])
-        filtered = [i for i in items if i.get('impact','Low').capitalize() in sel_impacts and i.get('category','News').capitalize() in sel_types]
+        
+        # Filtrage sécurisé (avec valeurs par défaut)
+        filtered = [
+            i for i in items 
+            if i.get('impact','Low') in sel_impacts
+            and i.get('category','News') in sel_types
+        ]
         
         if not filtered: st.warning("No updates found matching filters.")
         for item in filtered:
-            impact = item.get('impact', 'Low').lower()
-            category = item.get('category', 'News')
+            impact = item.get('impact', 'Low')
+            cat = item.get('category', 'News')
             
-            if impact == 'high': icon = "🔴"
-            elif impact == 'medium': icon = "🟡"
-            else: icon = "🟢"
-            
+            icon = "🔴" if impact == 'High' else "🟡" if impact == 'Medium' else "🟢"
             cat_map = {"Regulation":"🏛️", "Standard":"📏", "Guidance":"📘", "Enforcement":"📢", "News":"📰"}
             
             with st.container():
