@@ -46,10 +46,11 @@ DEFAULT_DOMAINS = [
 ]
 
 # =============================================================================
-# 1. STYLE CSS (THEME ENGINE)
+# 1. STYLE CSS AVANCÉ (THEME ENGINE)
 # =============================================================================
 def inject_custom_css():
     """Injecte le CSS pour surcharger le thème Streamlit par défaut."""
+    
     is_dark = st.session_state.get("dark_mode", False)
     bg_color = "#0e1117" if is_dark else C_BG_LIGHT
     card_bg = "#262730" if is_dark else "#FFFFFF"
@@ -96,24 +97,20 @@ def inject_custom_css():
         background-color: {C_GOLD} !important;
         color: white !important;
         transform: translateY(-2px);
+        box-shadow: 0 4px 10px rgba(0,0,0,0.15) !important;
     }}
 
-    div.stButton > button[kind="secondary"] {{
-        background-color: transparent !important;
-        border: 1px solid {C_GREEN_MAIN} !important;
-        color: {C_GREEN_MAIN} !important;
-    }}
-
+    /* Inputs */
     .stTextInput > div > div {{
         border-radius: 8px !important;
         border: 1px solid #E0E0E0 !important;
     }}
-    
     .stTextInput > div > div:focus-within {{
         border-color: {C_GREEN_MAIN} !important;
         box-shadow: 0 0 0 1px {C_GREEN_MAIN} !important;
     }}
     
+    /* Selectbox & Multiselect focus */
     .stSelectbox > div > div[aria-expanded="true"], 
     .stMultiSelect > div > div[aria-expanded="true"] {{
         border-color: {C_GREEN_MAIN} !important;
@@ -127,6 +124,7 @@ def inject_custom_css():
         color: {C_GREEN_MAIN} !important;
     }}
 
+    /* Cards */
     .info-card {{
         background-color: {card_bg};
         padding: 2rem;
@@ -145,27 +143,11 @@ def inject_custom_css():
         box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
         border-color: {C_GOLD};
     }}
-    
-    .login-wrapper {{
-        position: fixed;
-        top: 0; left: 0; width: 100%; height: 100%;
-        background: linear-gradient(135deg, {C_GREEN_MAIN} 0%, {C_GREEN_DARK} 100%);
-        z-index: 0;
-    }}
-    .login-box {{
-        background: white;
-        padding: 40px;
-        border-radius: 20px;
-        box-shadow: 0 20px 50px rgba(0,0,0,0.3);
-        text-align: center;
-        position: relative;
-        z-index: 1;
-    }}
     </style>
     """, unsafe_allow_html=True)
 
 # =============================================================================
-# 2. SESSION STATE
+# 1. SESSION STATE
 # =============================================================================
 def init_session_state():
     defaults = {
@@ -188,7 +170,7 @@ def init_session_state():
 init_session_state()
 
 # =============================================================================
-# 3. GESTION DES DONNÉES
+# 2. GESTION DES DONNÉES
 # =============================================================================
 @st.cache_resource
 def get_gsheet_workbook():
@@ -352,56 +334,32 @@ def create_eva_prompt(ctx, doc):
     Mission: Compliance Audit. Output: Strict English Markdown.
     Structure: 1. Verdict, 2. Gap Table (Requirement|Status|Evidence|Missing), 3. Risks, 4. Recommendations."""
 
-# --- PROMPT MIA REVU (Priorité DATE DE PUBLICATION) ---
 def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     return f"""
     ROLE: You are MIA (Market Intelligence Agent).
     CONTEXT: User monitoring: "{topic}" | Markets: {', '.join(markets)}
     SELECTED TIMEFRAME: {timeframe_label}
     RAW SEARCH DATA: {raw_search_data}
-    
-    MISSION:
-    1. FILTER by PUBLICATION DATE (The "Signal"): 
-       - Keep items where the ARTICLE/UPDATE ITSELF was published within {timeframe_label}.
-       - INCLUDE: Recent articles discussing old regulations, recent reminders, new interpretations of old laws.
-       - EXCLUDE: Old articles that do not fall within the timeline.
-       
-    2. Analyze Impact (High/Medium/Low) based on the relevance to the user's topic.
-    
-    3. CLASSIFY each item into:
-       - "Regulation" (Official laws)
-       - "Standard" (Technical norms)
-       - "Guidance" (Interpretations)
-       - "Enforcement" (Warning letters, recalls)
-       - "News" (Articles, press releases, analysis)
-    
+    MISSION: Filter raw data. Keep only relevant updates.
     OUTPUT FORMAT (Strict JSON):
     {{
-        "executive_summary": "A 2-sentence summary of the activity found in this timeframe.",
+        "executive_summary": "Summary...",
         "items": [
-            {{ 
-                "title": "...", 
-                "date": "YYYY-MM-DD (Publication date of the source)", 
-                "source_name": "...", 
-                "url": "...", 
-                "summary": "...", 
-                "tags": ["Tag1"], 
-                "impact": "High/Medium/Low",
-                "category": "Regulation" (or Standard, Guidance, Enforcement, News)
-            }}
+            {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["Tag1"], "impact": "High/Medium/Low", "category": "Regulation" }}
         ]
     }}
     """
 
-def get_logo_html():
-    svg = """<svg width="60" height="60" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+# --- CORRECTION DE LA FONCTION get_logo_html (Ajout param size) ---
+def get_logo_html(size=50):
+    svg = f"""<svg width="{size}" height="{size}" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
         <rect x="10" y="10" width="38" height="38" rx="8" fill="#295A63"/>
         <rect x="52" y="10" width="38" height="38" rx="8" fill="#C8A951"/>
         <rect x="10" y="52" width="38" height="38" rx="8" fill="#1A3C42"/>
         <rect x="52" y="52" width="38" height="38" rx="8" fill="#E6D5A7"/>
     </svg>"""
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
-    return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 15px;">'
+    return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 15px; display: inline-block;">'
 
 # =============================================================================
 # 7. PAGES UI
@@ -452,12 +410,8 @@ def page_mia():
     if st.button("🚀 Launch Monitoring", type="primary"):
         if topic:
             with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
-                # Semantic Cache Busting : On inclut le label temps dans la query texte
-                clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
-                query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
-                
+                query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released recently"
                 raw_data, error = cached_run_deep_search(query, days=days_limit)
-                
                 if not raw_data: st.error(f"Search failed: {error}")
                 else:
                     prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
@@ -506,7 +460,7 @@ def page_olivia():
     st.title("🤖 OlivIA Workspace")
     markets, _ = get_markets()
     c1, c2 = st.columns([2, 1])
-    with c1: desc = st.text_area("Product Definition", height=200)
+    with c1: desc = st.text_area("Product Definition", height=200, placeholder="Ex: Medical device class IIa...")
     with c2: 
         safe_default = [markets[0]] if markets else []
         ctrys = st.multiselect("Target Markets", markets, default=safe_default)
@@ -530,7 +484,6 @@ def page_olivia():
                 new_id = str(uuid.uuid4())
                 st.session_state["last_olivia_id"] = new_id
                 log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)}")
-                st.toast("Analysis Ready!", icon="✅")
             except Exception as e: st.error(str(e))
 
     if st.session_state["last_olivia_report"]:
@@ -556,7 +509,6 @@ def page_eva():
                 st.session_state["last_eva_report"] = resp
                 st.session_state["last_eva_id"] = str(uuid.uuid4())
                 log_usage("EVA", st.session_state["last_eva_id"], f"File: {up.name}")
-                st.toast("Audit Complete!", icon="🔍")
             except Exception as e: st.error(str(e))
     
     if st.session_state.get("last_eva_report"):
@@ -603,7 +555,6 @@ def render_sidebar():
         st.markdown(get_logo_html(), unsafe_allow_html=True)
         st.markdown(f"<div class='logo-text'>{config.APP_NAME}</div>", unsafe_allow_html=True)
         st.markdown("---")
-        
         pages = ["Dashboard", "OlivIA", "EVA", "MIA", "Admin"]
         curr = st.session_state["current_page"]
         
@@ -615,7 +566,6 @@ def render_sidebar():
             st.rerun()
 
         st.markdown("---")
-        
         # Toggle Dark Mode
         is_dark = st.checkbox("🌙 Night Mode", value=st.session_state["dark_mode"])
         if is_dark != st.session_state["dark_mode"]:
@@ -626,30 +576,36 @@ def render_sidebar():
         if st.button("Log Out"): logout(); st.rerun()
 
 def render_login():
-    # Centrage parfait
-    _, col, _ = st.columns([1, 2, 1])
-    with col:
-        st.markdown("<br><br><br>", unsafe_allow_html=True)
-        with st.container():
-            st.markdown(
-                f"""
-                <div style="background-color: white; padding: 40px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); text-align: center;">
-                    {get_logo_html(80)}
-                    <h1 style="color: #295A63; font-family: Montserrat; margin-bottom: 0;">{config.APP_NAME}</h1>
-                    <p style="color: #C8A951; font-weight: bold; letter-spacing: 2px; font-size: 0.8em; margin-top: 5px;">{config.APP_TAGLINE}</p>
-                </div>
-                """, 
-                unsafe_allow_html=True
-            )
-            st.write("")
-            st.text_input("🔐 Access Token", type="password", key="password_input", on_change=check_password)
-            
-    # Fond Vert Valhallai Forcé pour le login
+    # Force fond vert pour la page de login uniquement (Brand Identity)
     st.markdown("""
     <style>
     .stApp { background-color: #295A63; }
+    .login-box {
+        background-color: white;
+        padding: 40px;
+        border-radius: 15px;
+        box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+        text-align: center;
+        margin-top: 15vh;
+    }
+    .login-box h1 { color: #295A63 !important; }
+    .login-box p { color: #C8A951 !important; letter-spacing: 2px; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
+    
+    c1, c2, c3 = st.columns([1, 2, 1])
+    with c2:
+        # Conteneur centré
+        with st.container():
+            st.markdown(f"""
+            <div class="login-box">
+                {get_logo_html(80)}
+                <h1 style="margin: 0; font-family: Montserrat;">{config.APP_NAME}</h1>
+                <p style="margin-top: 5px;">{config.APP_TAGLINE}</p>
+            </div>
+            """, unsafe_allow_html=True)
+            st.write("")
+            st.text_input("🔐 Access Token", type="password", key="password_input", on_change=check_password)
 
 def main():
     inject_custom_css()
