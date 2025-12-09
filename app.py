@@ -203,7 +203,6 @@ def extract_text_from_pdf(b):
 # =============================================================================
 # 5. AUTH & PROMPTS
 # =============================================================================
-# Nouvelle fonction de validation manuelle pour éviter le bug de l'oeil
 def check_password_manual(token):
     correct_token = st.secrets.get("APP_TOKEN")
     if not correct_token:
@@ -242,12 +241,31 @@ def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     CONTEXT: User monitoring: "{topic}" | Markets: {', '.join(markets)}
     SELECTED TIMEFRAME: {timeframe_label}
     RAW SEARCH DATA: {raw_search_data}
-    MISSION: Filter raw data. Keep only relevant updates.
+    
+    MISSION:
+    1. FILTER by PUBLICATION DATE (The "Signal"): 
+       - Keep items where the ARTICLE/UPDATE ITSELF was published within {timeframe_label}.
+       - INCLUDE: Recent articles discussing old regulations, recent reminders, new interpretations of old laws.
+       - EXCLUDE: Old articles that do not fall within the timeline.
+       
+    2. Analyze Impact (High/Medium/Low) based on the relevance to the user's topic.
+    
+    3. CLASSIFY each item into: "Regulation", "Standard", "Guidance", "Enforcement", "News".
+    
     OUTPUT FORMAT (Strict JSON):
     {{
         "executive_summary": "Summary...",
         "items": [
-            {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["Tag1"], "impact": "High/Medium/Low", "category": "Regulation" }}
+            {{ 
+                "title": "...", 
+                "date": "YYYY-MM-DD (Publication date of the source)", 
+                "source_name": "...", 
+                "url": "...", 
+                "summary": "...", 
+                "tags": ["Tag1"], 
+                "impact": "High/Medium/Low",
+                "category": "Regulation"
+            }}
         ]
     }}
     """
@@ -352,7 +370,8 @@ def page_mia():
     if st.button("🚀 Launch Monitoring", type="primary"):
         if topic:
             with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
-                query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released recently"
+                clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
+                query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
                 raw_data, error = cached_run_deep_search(query, days=days_limit)
                 if not raw_data: st.error(f"Search failed: {error}")
                 else:
@@ -376,7 +395,17 @@ def page_mia():
             sel_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"])
         with c_legend:
             st.write(""); st.write("")
-            st.markdown("<div><span style='color:#e53935'>●</span> High <span style='color:#fb8c00'>●</span> Medium <span style='color:#43a047'>●</span> Low</div>", unsafe_allow_html=True)
+            st.markdown(
+                """
+                <div style="padding-top: 5px; font-size: 0.9em; white-space: nowrap;">
+                    <span style='color: #e53935;'>●</span> High &nbsp;
+                    <span style='color: #fb8c00;'>●</span> Medium &nbsp;
+                    <span style='color: #43a047;'>●</span> Low <br>
+                    <span style='font-size: 0.8em; color: gray;'>📅 Dates refer to online publication</span>
+                </div>
+                """, 
+                unsafe_allow_html=True
+            )
         
         st.markdown("---")
         items = results.get("items", [])
@@ -426,6 +455,7 @@ def page_olivia():
                 new_id = str(uuid.uuid4())
                 st.session_state["last_olivia_id"] = new_id
                 log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)}")
+                st.toast("Analysis Ready!", icon="✅")
             except Exception as e: st.error(str(e))
 
     if st.session_state["last_olivia_report"]:
