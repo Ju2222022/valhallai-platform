@@ -24,7 +24,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Configuration MIA
 if "mia" not in config.AGENTS:
     config.AGENTS["mia"] = {
         "name": "MIA",
@@ -32,19 +31,26 @@ if "mia" not in config.AGENTS:
         "description": "Market Intelligence Agent (Regulatory Watch & Monitoring)."
     }
 
+# Liste de secours
 DEFAULT_DOMAINS = [
-    "eur-lex.europa.eu", "europa.eu", "fda.gov", "iso.org", "gov.uk", 
-    "reuters.com", "raps.org", "medtechdive.com"
+    "eur-lex.europa.eu", "europa.eu", "echa.europa.eu", "cenelec.eu", 
+    "single-market-economy.ec.europa.eu",
+    "fda.gov", "fcc.gov", "cpsc.gov", "osha.gov", "phmsa.dot.gov",
+    "iso.org", "iec.ch", "unece.org", "iata.org",
+    "gov.uk", "meti.go.jp", "kats.go.kr",
+    "reuters.com", "raps.org", "medtechdive.com", "complianceandrisks.com"
 ]
 
 # =============================================================================
-# 1. SESSION STATE
+# 1. INITIALISATION STATE
 # =============================================================================
 def init_session_state():
     defaults = {
         "authenticated": False,
         "admin_authenticated": False,
         "current_page": "Dashboard",
+        # REGLAGE 1 : False par défaut (Mode Clair pour l'app)
+        "dark_mode": False, 
         "last_olivia_report": None,
         "last_olivia_id": None, 
         "last_eva_report": None,
@@ -60,7 +66,7 @@ def init_session_state():
 init_session_state()
 
 # =============================================================================
-# 2. DONNÉES (GOOGLE SHEETS)
+# 2. GESTION DES DONNÉES
 # =============================================================================
 @st.cache_resource
 def get_gsheet_workbook():
@@ -98,7 +104,7 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
         log_sheet.append_row([now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), report_id, report_type, details, extra_metrics])
     except: pass
 
-# --- HELPERS ---
+# --- HELPERS BDD ---
 def get_markets():
     wb = get_gsheet_workbook()
     if wb:
@@ -160,7 +166,7 @@ def update_domain(idx, name):
         except: pass
 
 # =============================================================================
-# 4. API
+# 4. API & SEARCH & CACHING
 # =============================================================================
 def get_api_key():
     return st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -202,7 +208,7 @@ def extract_text_from_pdf(b):
     except Exception as e: return str(e)
 
 # =============================================================================
-# 5. LOGIQUE MÉTIER & PROMPTS
+# 5. AUTH & PROMPTS
 # =============================================================================
 def check_password():
     if not st.secrets.get("APP_TOKEN"): st.session_state["authenticated"]=True; return
@@ -256,8 +262,58 @@ def get_logo_html():
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
     return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 15px;">'
 
+# --- THEME INTELLIGENT (LOGIN = DARK, APP = USER CHOICE) ---
+def apply_theme():
+    # Logique : Si non authentifié -> Force Dark Mode (Image de marque)
+    # Sinon -> Respecte le choix utilisateur (Light par défaut)
+    if not st.session_state["authenticated"]:
+        mode = "dark"
+    else:
+        mode = "dark" if st.session_state["dark_mode"] else "light"
+        
+    c = config.COLORS[mode]
+    
+    st.markdown(f"""
+    <style>
+    /* Application des couleurs de fond */
+    .stApp {{
+        background-color: {c['background']};
+        color: {c['text']};
+    }}
+    
+    /* Titres aux couleurs de la marque */
+    h1, h2, h3 {{ color: {c['primary']} !important; }}
+    
+    /* Input Fields (Adaptation au thème) */
+    .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] {{
+        background-color: {c['card']} !important;
+        color: {c['text']} !important;
+        border: 1px solid {c['border']};
+    }}
+    
+    /* Carte Info Dashboard */
+    .info-card {{ 
+        background-color: {c['card']}; 
+        padding: 2rem; border-radius: 12px; border: 1px solid {c['border']}; 
+        min-height: 220px; display: flex; flex-direction: column; justify-content: flex-start;
+    }}
+    
+    /* Boutons Primaires (Vert Valhallai ou Or selon thème) */
+    div.stButton > button:first-child {{ 
+        background-color: {c['primary']} !important; 
+        color: {c['button_text']} !important; 
+        border-radius: 8px; font-weight: 600; width: 100%; border: none;
+    }}
+    div.stButton > button:first-child:hover {{ filter: brightness(1.1); }}
+    
+    /* Harmonisation des textes */
+    p, li, span {{ color: {c['text']}; }}
+    
+    </style>
+    """, unsafe_allow_html=True)
+
 # =============================================================================
-# 6. PAGES
+# 7. PAGES UI
 # =============================================================================
 def page_admin():
     st.title("⚙️ Admin Console"); st.markdown("---")
@@ -314,8 +370,7 @@ def page_mia():
                     if json_str:
                         st.session_state["last_mia_results"] = json.loads(json_str)
                         log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
-                        st.toast("Monitoring Complete!", icon="🎉")
-                        st.rerun()
+                        # Pas de rerun ici
                     else: st.error("Analysis failed.")
 
     results = st.session_state.get("last_mia_results")
@@ -330,8 +385,8 @@ def page_mia():
         with c_filter2:
             sel_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"])
         with c_legend:
-            st.caption("ℹ️ Legend:")
-            st.markdown("🔴 High | 🟡 Medium | 🟢 Low")
+            st.write(""); st.write("")
+            st.markdown("<div><span style='color:#e53935'>●</span> High <span style='color:#fb8c00'>●</span> Medium <span style='color:#43a047'>●</span> Low</div>", unsafe_allow_html=True)
         
         st.markdown("---")
         items = results.get("items", [])
@@ -359,7 +414,8 @@ def page_olivia():
     c1, c2 = st.columns([2, 1])
     with c1: desc = st.text_area("Product Definition", height=200)
     with c2: 
-        ctrys = st.multiselect("Target Markets", markets)
+        safe_default = [markets[0]] if markets else []
+        ctrys = st.multiselect("Target Markets", markets, default=safe_default)
         st.write(""); gen = st.button("Generate Report", type="primary")
     
     if gen and desc:
@@ -376,10 +432,10 @@ def page_olivia():
                 
                 resp = cached_ai_generation(p, config.OPENAI_MODEL, 0.1)
                 st.session_state["last_olivia_report"] = resp
-                st.session_state["last_olivia_id"] = str(uuid.uuid4())
+                
+                new_id = str(uuid.uuid4())
+                st.session_state["last_olivia_id"] = new_id
                 log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)}")
-                st.toast("Analysis Ready!", icon="✅")
-                st.rerun()
             except Exception as e: st.error(str(e))
 
     if st.session_state["last_olivia_report"]:
@@ -405,7 +461,6 @@ def page_eva():
                 st.session_state["last_eva_report"] = resp
                 st.session_state["last_eva_id"] = str(uuid.uuid4())
                 log_usage("EVA", st.session_state["last_eva_id"], f"File: {up.name}")
-                st.toast("Audit Complete!", icon="🔍")
             except Exception as e: st.error(str(e))
     
     if st.session_state.get("last_eva_report"):
@@ -425,52 +480,67 @@ def page_dashboard():
     c1, c2, c3 = st.columns(3)
     
     with c1: 
-        st.info(f"**🤖 OlivIA**\n\n{config.AGENTS['olivia']['description']}")
+        st.markdown(f"""<div class="info-card"><h3>🤖 OlivIA</h3><p class='sub-text'>{config.AGENTS['olivia']['description']}</p></div>""", unsafe_allow_html=True)
+        st.write("")
         if st.button("Launch OlivIA ->"): 
             st.session_state["current_page"] = "OlivIA"
             st.rerun()
     with c2: 
-        st.info(f"**🔍 EVA**\n\n{config.AGENTS['eva']['description']}")
+        st.markdown(f"""<div class="info-card"><h3>🔍 EVA</h3><p class='sub-text'>{config.AGENTS['eva']['description']}</p></div>""", unsafe_allow_html=True)
+        st.write("")
         if st.button("Launch EVA ->"): 
             st.session_state["current_page"] = "EVA"
             st.rerun()
     with c3: 
-        st.info(f"**📡 MIA**\n\n{config.AGENTS['mia']['description']}")
+        st.markdown(f"""<div class="info-card"><h3>{config.AGENTS['mia']['icon']} {config.AGENTS['mia']['name']}</h3><p class='sub-text'>{config.AGENTS['mia']['description']}</p></div>""", unsafe_allow_html=True)
+        st.write("")
         if st.button("Launch MIA ->"): 
             st.session_state["current_page"] = "MIA"
             st.rerun()
 
 def render_sidebar():
     with st.sidebar:
+        if st.button("🏠 Dashboard", use_container_width=True):
+             st.session_state["current_page"] = "Dashboard"
+             st.rerun()
+
         st.markdown(get_logo_html(), unsafe_allow_html=True)
-        st.markdown(f"<div style='font-weight:bold; font-size:1.2em;'>{config.APP_NAME}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div class='logo-text'>{config.APP_NAME}</div>", unsafe_allow_html=True)
         st.markdown("---")
         
-        # Navigation simple et robuste
         pages = ["Dashboard", "OlivIA", "EVA", "MIA", "Admin"]
+        curr = st.session_state["current_page"]
         
-        # On s'assure que current_page est valide
-        if st.session_state["current_page"] not in pages:
-            st.session_state["current_page"] = "Dashboard"
-            
-        selection = st.radio("MENU", pages, index=pages.index(st.session_state["current_page"]))
+        idx = pages.index(curr) if curr in pages else 0
+        selected = st.radio("NAV", pages, index=idx, label_visibility="collapsed")
         
-        if selection != st.session_state["current_page"]:
-            st.session_state["current_page"] = selection
+        if selected != curr:
+            st.session_state["current_page"] = selected
             st.rerun()
-            
+
+        st.markdown("---")
+        
+        # Toggle Dark Mode (Applique le CSS dynamique)
+        is_dark = st.checkbox("🌙 Night Mode", value=st.session_state["dark_mode"])
+        if is_dark != st.session_state["dark_mode"]:
+            st.session_state["dark_mode"] = is_dark
+            st.rerun()
+
         st.markdown("---")
         if st.button("Log Out"): logout(); st.rerun()
 
 def render_login():
+    # Centrage Login
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
-        st.markdown("<br><br>", unsafe_allow_html=True)
-        st.markdown(get_logo_html(), unsafe_allow_html=True)
-        st.title(config.APP_NAME)
+        st.markdown("<br><br><br>", unsafe_allow_html=True)
+        st.markdown(f"<div style='text-align:center'>{get_logo_html()}</div>", unsafe_allow_html=True)
+        st.markdown(f"<h1 style='text-align: center; color: #295A63;'>{config.APP_NAME}</h1>", unsafe_allow_html=True)
+        st.markdown(f"<p style='text-align: center; color: #666;'>{config.APP_TAGLINE}</p>", unsafe_allow_html=True)
         st.text_input("Token", type="password", key="password_input", on_change=check_password)
 
 def main():
+    apply_theme() # Applique le CSS selon si on est en Login (Dark) ou App (User Choice)
     if st.session_state["authenticated"]:
         render_sidebar()
         p = st.session_state["current_page"]
