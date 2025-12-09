@@ -15,7 +15,7 @@ import config
 from utils_pdf import generate_pdf_report
 
 # =============================================================================
-# 0. CONFIGURATION & SETUP
+# 0. CONFIGURATION
 # =============================================================================
 st.set_page_config(
     page_title=config.APP_NAME,
@@ -23,14 +23,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
-# --- PALETTE DE COULEURS ---
-C_GREEN_DARK = "#1A3C42"
-C_GREEN_MAIN = "#295A63"
-C_GOLD       = "#C8A951"
-C_GOLD_LIGHT = "#E6D5A7"
-C_BG_LIGHT   = "#F8F9FA"
-C_TEXT_MAIN  = "#1E293B"
 
 # Configuration MIA
 if "mia" not in config.AGENTS:
@@ -40,121 +32,24 @@ if "mia" not in config.AGENTS:
         "description": "Market Intelligence Agent (Regulatory Watch & Monitoring)."
     }
 
+# Liste de secours
 DEFAULT_DOMAINS = [
-    "eur-lex.europa.eu", "europa.eu", "fda.gov", "iso.org", "gov.uk", 
+    "eur-lex.europa.eu", "europa.eu", "echa.europa.eu", "cenelec.eu", 
+    "single-market-economy.ec.europa.eu",
+    "fda.gov", "fcc.gov", "cpsc.gov", "osha.gov", "phmsa.dot.gov",
+    "iso.org", "iec.ch", "unece.org", "iata.org",
+    "gov.uk", "meti.go.jp", "kats.go.kr",
     "reuters.com", "raps.org", "medtechdive.com", "complianceandrisks.com"
 ]
 
 # =============================================================================
-# 1. STYLE CSS AVANCÉ (THEME ENGINE)
-# =============================================================================
-def inject_custom_css():
-    """Injecte le CSS pour surcharger le thème Streamlit par défaut."""
-    
-    is_dark = st.session_state.get("dark_mode", False)
-    bg_color = "#0e1117" if is_dark else C_BG_LIGHT
-    card_bg = "#262730" if is_dark else "#FFFFFF"
-    text_color = "#FAFAFA" if is_dark else C_TEXT_MAIN
-    
-    st.markdown(f"""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=Inter:wght@400;500;600&display=swap');
-
-    .stApp {{
-        background-color: {bg_color};
-        color: {text_color};
-        font-family: 'Inter', sans-serif;
-    }}
-    
-    h1, h2, h3 {{
-        font-family: 'Montserrat', sans-serif !important;
-        color: {C_GREEN_MAIN} !important;
-        font-weight: 700 !important;
-    }}
-    
-    @media (prefers-color-scheme: dark) {{
-        h1, h2, h3 {{ color: {C_GOLD} !important; }}
-    }}
-    
-    [data-testid="stSidebar"] {{
-        background-color: {card_bg};
-        border-right: 1px solid rgba(41, 90, 99, 0.1);
-    }}
-
-    div.stButton > button {{
-        background-color: {C_GREEN_MAIN} !important;
-        color: white !important;
-        border: none !important;
-        border-radius: 8px !important;
-        padding: 0.6rem 1.2rem !important;
-        font-weight: 600 !important;
-        font-family: 'Montserrat', sans-serif !important;
-        transition: all 0.2s ease-in-out !important;
-        box-shadow: 0 2px 5px rgba(0,0,0,0.1) !important;
-    }}
-    
-    div.stButton > button:hover {{
-        background-color: {C_GOLD} !important;
-        color: white !important;
-        transform: translateY(-2px);
-        box-shadow: 0 4px 10px rgba(0,0,0,0.15) !important;
-    }}
-
-    /* Inputs */
-    .stTextInput > div > div {{
-        border-radius: 8px !important;
-        border: 1px solid #E0E0E0 !important;
-    }}
-    .stTextInput > div > div:focus-within {{
-        border-color: {C_GREEN_MAIN} !important;
-        box-shadow: 0 0 0 1px {C_GREEN_MAIN} !important;
-    }}
-    
-    /* Selectbox & Multiselect focus */
-    .stSelectbox > div > div[aria-expanded="true"], 
-    .stMultiSelect > div > div[aria-expanded="true"] {{
-        border-color: {C_GREEN_MAIN} !important;
-    }}
-
-    .stMultiSelect span[data-baseweb="tag"] {{
-        background-color: {C_GREEN_MAIN}20 !important;
-        border: 1px solid {C_GREEN_MAIN}40 !important;
-    }}
-    .stMultiSelect span[data-baseweb="tag"] span {{
-        color: {C_GREEN_MAIN} !important;
-    }}
-
-    /* Cards */
-    .info-card {{
-        background-color: {card_bg};
-        padding: 2rem;
-        border-radius: 16px;
-        border: 1px solid rgba(0,0,0,0.05);
-        box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
-        transition: transform 0.2s;
-        height: 100%;
-        min-height: 250px;
-        display: flex;
-        flex-direction: column;
-        justify-content: space-between;
-    }}
-    .info-card:hover {{
-        transform: translateY(-5px);
-        box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1);
-        border-color: {C_GOLD};
-    }}
-    </style>
-    """, unsafe_allow_html=True)
-
-# =============================================================================
-# 1. SESSION STATE
+# 1. INITIALISATION STATE
 # =============================================================================
 def init_session_state():
     defaults = {
         "authenticated": False,
         "admin_authenticated": False,
         "current_page": "Dashboard",
-        "dark_mode": False, 
         "last_olivia_report": None,
         "last_olivia_id": None, 
         "last_eva_report": None,
@@ -181,7 +76,7 @@ def get_gsheet_workbook():
         if "-----BEGIN" not in raw_key: raw_key = "-----BEGIN PRIVATE KEY-----\n" + raw_key.strip()
         if "-----END" not in raw_key: raw_key = raw_key.strip() + "\n-----END PRIVATE KEY-----"
         
-        creds = {
+        creds_dict = {
             "type": sa_secrets["type"], "project_id": sa_secrets["project_id"],
             "private_key_id": sa_secrets["private_key_id"], "private_key": raw_key,
             "client_email": sa_secrets["client_email"], "client_id": sa_secrets["client_id"],
@@ -189,7 +84,7 @@ def get_gsheet_workbook():
             "auth_provider_x509_cert_url": sa_secrets["auth_provider_x509_cert_url"],
             "client_x509_cert_url": sa_secrets["client_x509_cert_url"]
         }
-        gc = gspread.service_account_from_dict(creds)
+        gc = gspread.service_account_from_dict(creds_dict)
         return gc.open_by_url(st.secrets["gsheets"]["url"])
     except: return None
 
@@ -350,8 +245,8 @@ def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     }}
     """
 
-# --- CORRECTION DE LA FONCTION get_logo_html (Ajout param size) ---
 def get_logo_html(size=50):
+    # Logo SVG avec les couleurs de la marque
     svg = f"""<svg width="{size}" height="{size}" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
         <rect x="10" y="10" width="38" height="38" rx="8" fill="#295A63"/>
         <rect x="52" y="10" width="38" height="38" rx="8" fill="#C8A951"/>
@@ -359,7 +254,88 @@ def get_logo_html(size=50):
         <rect x="52" y="52" width="38" height="38" rx="8" fill="#E6D5A7"/>
     </svg>"""
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
-    return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 15px; display: inline-block;">'
+    return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 10px; display: inline-block;">'
+
+# --- THEME CSS STABLE & BRANDÉ ---
+def apply_theme():
+    # 1. PAGE LOGIN : FOND VERT IMMERSIF
+    if not st.session_state["authenticated"]:
+        st.markdown("""
+        <style>
+        .stApp { background-color: #295A63; }
+        .login-box {
+            background-color: white;
+            padding: 40px;
+            border-radius: 12px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+            text-align: center;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+    
+    # 2. APPLICATION : FOND CLAIR + TOUCHES DE VERT (Pas de modification brutale de la sidebar)
+    else:
+        st.markdown("""
+        <style>
+        @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700&family=Inter:wght@400;600&display=swap');
+        
+        /* Police Globale */
+        html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+        
+        /* Titres en Vert Valhallai */
+        h1, h2, h3 { 
+            font-family: 'Montserrat', sans-serif !important; 
+            color: #295A63 !important; 
+        }
+        
+        /* Boutons Primaires en Vert Valhallai */
+        div.stButton > button:first-child { 
+            background-color: #295A63 !important; 
+            color: white !important; 
+            border-radius: 8px; 
+            font-weight: 600; 
+            border: none;
+            transition: all 0.2s;
+        }
+        div.stButton > button:first-child:hover { 
+            background-color: #C8A951 !important; /* Or au survol */
+            color: black !important;
+            transform: translateY(-2px);
+        }
+
+        /* Cartes Info (Dashboard & MIA) */
+        .info-card { 
+            background-color: white;
+            padding: 2rem; 
+            border-radius: 12px; 
+            border: 1px solid #E2E8F0; 
+            min-height: 220px; 
+            display: flex; 
+            flex-direction: column; 
+            justify-content: flex-start;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+        }
+        .info-card:hover {
+            border-color: #C8A951;
+            box-shadow: 0 8px 15px rgba(0,0,0,0.1);
+        }
+
+        /* Inputs : Bordure verte au focus */
+        .stTextInput > div > div:focus-within {
+            border-color: #295A63 !important;
+            box-shadow: 0 0 0 1px #295A63 !important;
+        }
+        
+        /* Tags Multiselect en Vert */
+        .stMultiSelect span[data-baseweb="tag"] {
+            background-color: rgba(41, 90, 99, 0.1) !important;
+            border: 1px solid rgba(41, 90, 99, 0.3) !important;
+        }
+        .stMultiSelect span[data-baseweb="tag"] span {
+            color: #295A63 !important;
+        }
+        </style>
+        """, unsafe_allow_html=True)
 
 # =============================================================================
 # 7. PAGES UI
@@ -448,22 +424,32 @@ def page_mia():
             cat_map = {"Regulation":"🏛️", "Standard":"📏", "Guidance":"📘", "Enforcement":"📢", "News":"📰"}
             
             with st.container():
-                c1, c2 = st.columns([0.1, 0.9])
-                with c1: st.markdown(f"## {icon}")
-                with c2:
-                    st.markdown(f"**[{cat_map.get(cat,'📄')} {cat}]** [{item['title']}]({item['url']})")
-                    st.caption(f"📅 {item['date']} | 🏛️ {item['source_name']}")
-                    st.write(item['summary'])
-                st.markdown("---")
+                st.markdown(f"""
+                <div class="info-card" style="min-height:auto; padding:1.5rem; margin-bottom:1rem;">
+                    <div style="display:flex;">
+                        <div style="font-size:1.5rem; margin-right:15px;">{icon}</div>
+                        <div>
+                            <div style="font-weight:bold; font-size:1.1em; color:#1A202C;">
+                                <a href="{item['url']}" target="_blank" style="text-decoration:none; color:inherit;">
+                                    {cat_map.get(cat,'📄')} {item['title']}
+                                </a>
+                            </div>
+                            <div style="font-size:0.85em; opacity:0.7; margin-bottom:5px; color:#4A5568;">
+                                📅 {item['date']} | 🏛️ {item['source_name']}
+                            </div>
+                            <div style="color:#2D3748;">{item['summary']}</div>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
 
 def page_olivia():
     st.title("🤖 OlivIA Workspace")
     markets, _ = get_markets()
     c1, c2 = st.columns([2, 1])
-    with c1: desc = st.text_area("Product Definition", height=200, placeholder="Ex: Medical device class IIa...")
+    with c1: desc = st.text_area("Product Definition", height=200)
     with c2: 
-        safe_default = [markets[0]] if markets else []
-        ctrys = st.multiselect("Target Markets", markets, default=safe_default)
+        ctrys = st.multiselect("Target Markets", markets, default=[markets[0]] if markets else [])
         st.write(""); gen = st.button("Generate Report", type="primary")
     
     if gen and desc:
@@ -474,16 +460,13 @@ def page_olivia():
                 if use_ds: 
                     d, _ = cached_run_deep_search(f"Regulations for {desc} in {ctrys}")
                     if d: ctx = d
-                
                 p = create_olivia_prompt(desc, ctrys)
                 if ctx: p += f"\n\nCONTEXT:\n{ctx}"
-                
                 resp = cached_ai_generation(p, config.OPENAI_MODEL, 0.1)
                 st.session_state["last_olivia_report"] = resp
-                
-                new_id = str(uuid.uuid4())
-                st.session_state["last_olivia_id"] = new_id
+                st.session_state["last_olivia_id"] = str(uuid.uuid4())
                 log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)}")
+                st.rerun()
             except Exception as e: st.error(str(e))
 
     if st.session_state["last_olivia_report"]:
@@ -509,6 +492,7 @@ def page_eva():
                 st.session_state["last_eva_report"] = resp
                 st.session_state["last_eva_id"] = str(uuid.uuid4())
                 log_usage("EVA", st.session_state["last_eva_id"], f"File: {up.name}")
+                st.rerun()
             except Exception as e: st.error(str(e))
     
     if st.session_state.get("last_eva_report"):
@@ -555,6 +539,7 @@ def render_sidebar():
         st.markdown(get_logo_html(), unsafe_allow_html=True)
         st.markdown(f"<div class='logo-text'>{config.APP_NAME}</div>", unsafe_allow_html=True)
         st.markdown("---")
+        
         pages = ["Dashboard", "OlivIA", "EVA", "MIA", "Admin"]
         curr = st.session_state["current_page"]
         
@@ -566,49 +551,40 @@ def render_sidebar():
             st.rerun()
 
         st.markdown("---")
-        # Toggle Dark Mode
-        is_dark = st.checkbox("🌙 Night Mode", value=st.session_state["dark_mode"])
-        if is_dark != st.session_state["dark_mode"]:
-            st.session_state["dark_mode"] = is_dark
-            st.rerun()
-
-        st.markdown("---")
         if st.button("Log Out"): logout(); st.rerun()
 
 def render_login():
-    # Force fond vert pour la page de login uniquement (Brand Identity)
+    # Force le fond Vert uniquement pour cette page
     st.markdown("""
     <style>
     .stApp { background-color: #295A63; }
     .login-box {
         background-color: white;
         padding: 40px;
-        border-radius: 15px;
-        box-shadow: 0 20px 50px rgba(0,0,0,0.3);
+        border-radius: 12px;
+        box-shadow: 0 15px 30px rgba(0,0,0,0.3);
         text-align: center;
-        margin-top: 15vh;
     }
     .login-box h1 { color: #295A63 !important; }
-    .login-box p { color: #C8A951 !important; letter-spacing: 2px; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
-    
+
     c1, c2, c3 = st.columns([1, 2, 1])
     with c2:
-        # Conteneur centré
+        st.markdown("<br><br><br>", unsafe_allow_html=True)
         with st.container():
             st.markdown(f"""
             <div class="login-box">
                 {get_logo_html(80)}
-                <h1 style="margin: 0; font-family: Montserrat;">{config.APP_NAME}</h1>
-                <p style="margin-top: 5px;">{config.APP_TAGLINE}</p>
+                <h1 style="font-family:Montserrat; margin:10px 0;">{config.APP_NAME}</h1>
+                <p style="color:#C8A951; font-weight:bold; letter-spacing:2px; font-size:0.9em;">{config.APP_TAGLINE}</p>
             </div>
             """, unsafe_allow_html=True)
             st.write("")
-            st.text_input("🔐 Access Token", type="password", key="password_input", on_change=check_password)
+            st.text_input("Access Token", type="password", key="password_input", on_change=check_password)
 
 def main():
-    inject_custom_css()
+    apply_theme()
     if st.session_state["authenticated"]:
         render_sidebar()
         p = st.session_state["current_page"]
