@@ -203,10 +203,10 @@ def extract_text_from_pdf(b):
 # =============================================================================
 # 5. AUTH & PROMPTS
 # =============================================================================
-def validate_login(token):
-    """Validation manuelle pour éviter le bug de l'oeil."""
+# Nouvelle fonction de validation manuelle pour éviter le bug de l'oeil
+def check_password_manual(token):
     correct_token = st.secrets.get("APP_TOKEN")
-    if not correct_token: 
+    if not correct_token:
         st.session_state["authenticated"] = True
         st.rerun()
     
@@ -242,31 +242,12 @@ def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     CONTEXT: User monitoring: "{topic}" | Markets: {', '.join(markets)}
     SELECTED TIMEFRAME: {timeframe_label}
     RAW SEARCH DATA: {raw_search_data}
-    
-    MISSION:
-    1. FILTER by PUBLICATION DATE (The "Signal"): 
-       - Keep items where the ARTICLE/UPDATE ITSELF was published within {timeframe_label}.
-       - INCLUDE: Recent articles discussing old regulations, recent reminders, new interpretations of old laws.
-       - EXCLUDE: Old articles that do not fall within the timeline.
-       
-    2. Analyze Impact (High/Medium/Low) based on the relevance to the user's topic.
-    
-    3. CLASSIFY each item into: "Regulation", "Standard", "Guidance", "Enforcement", "News".
-    
+    MISSION: Filter raw data. Keep only relevant updates.
     OUTPUT FORMAT (Strict JSON):
     {{
         "executive_summary": "Summary...",
         "items": [
-            {{ 
-                "title": "...", 
-                "date": "YYYY-MM-DD (Publication date of the source)", 
-                "source_name": "...", 
-                "url": "...", 
-                "summary": "...", 
-                "tags": ["Tag1"], 
-                "impact": "High/Medium/Low",
-                "category": "Regulation"
-            }}
+            {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["Tag1"], "impact": "High/Medium/Low", "category": "Regulation" }}
         ]
     }}
     """
@@ -280,6 +261,47 @@ def get_logo_html(size=50):
     </svg>"""
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
     return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 10px; display: inline-block;">'
+
+# --- THEME SOBRE ET EFFICACE ---
+def apply_theme():
+    # CSS minimaliste : on surcharge juste les couleurs primaires et les cartes
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700&family=Inter:wght@400;600&display=swap');
+
+    /* Font Globale */
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+    
+    /* Titres en Montserrat Vert Valhallai */
+    h1, h2, h3 { 
+        font-family: 'Montserrat', sans-serif !important; 
+        color: #295A63 !important; 
+    }
+
+    /* Carte Info */
+    .info-card { 
+        padding: 2rem; border-radius: 12px; border: 1px solid #E2E8F0; 
+        min-height: 220px; display: flex; flex-direction: column; justify-content: flex-start;
+        background-color: white;
+    }
+    
+    /* Boutons Primaires */
+    div.stButton > button:first-child { 
+        background-color: #295A63 !important; color: white !important; 
+        border-radius: 8px; font-weight: 600; width: 100%; border: none;
+    }
+    div.stButton > button:first-child:hover {
+        background-color: #C8A951 !important; /* Gold au survol */
+        color: black !important;
+    }
+    
+    /* Inputs au focus */
+    .stTextInput > div > div:focus-within {
+        border-color: #295A63 !important;
+        box-shadow: 0 0 0 1px #295A63 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 # =============================================================================
 # 7. PAGES UI
@@ -429,6 +451,7 @@ def page_eva():
                 st.session_state["last_eva_report"] = resp
                 st.session_state["last_eva_id"] = str(uuid.uuid4())
                 log_usage("EVA", st.session_state["last_eva_id"], f"File: {up.name}")
+                st.toast("Audit Complete!", icon="🔍")
             except Exception as e: st.error(str(e))
     
     if st.session_state.get("last_eva_report"):
@@ -489,110 +512,33 @@ def render_sidebar():
         if st.button("Log Out"): logout(); st.rerun()
 
 def render_login():
-    # CSS LOGIN : Page Vert foncé + Encart Blanc
-    st.markdown("""
-    <style>
-    .stApp { background-color: #295A63; }
-    .login-box {
-        background-color: white;
-        padding: 40px;
-        border-radius: 12px;
-        box-shadow: 0 15px 30px rgba(0,0,0,0.3);
-        text-align: center;
-    }
-    .login-box h1 { color: #295A63 !important; }
+    # Page centrée sobre
+    _, col, _ = st.columns([1, 1.5, 1])
     
-    /* INPUT FIELD STYLING - CLAIR SUR FOND BLANC */
-    .stTextInput input {
-        background-color: #F7F9FA !important;
-        color: #1A202C !important;
-        border: 1px solid #E2E8F0 !important;
-    }
-    .stTextInput input:focus {
-        border-color: #295A63 !important;
-        box-shadow: 0 0 0 1px #295A63 !important;
-    }
-    .stTextInput label {
-        color: #295A63 !important; /* Label vert pour contraste sur blanc */
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    c1, c2, c3 = st.columns([1, 2, 1])
-    with c2:
+    with col:
         st.markdown("<br><br><br>", unsafe_allow_html=True)
-        with st.container():
-            st.markdown(f"""
-            <div class="login-box">
-                {get_logo_html(80)}
-                <h1 style="font-family:Montserrat; margin:10px 0;">{config.APP_NAME}</h1>
-                <p style="color:#C8A951; font-weight:bold; letter-spacing:2px; font-size:0.9em;">{config.APP_TAGLINE}</p>
-            </div>
-            """, unsafe_allow_html=True)
-            
-            st.write("")
-            
-            # --- FORMULAIRE POUR FIXER LE BUG DE L'OEIL ---
-            with st.form("login_form", clear_on_submit=False):
-                token = st.text_input("🔐 Access Token", type="password")
-                submitted = st.form_submit_button("Enter", type="primary", use_container_width=True)
-                
-                if submitted:
-                    validate_login(token)
-
-def main():
-    if st.session_state["authenticated"]:
-        # INJECTION CSS POUR L'APP (Light mode brandé)
-        st.markdown("""
-        <style>
-        @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700&family=Inter:wght@400;600&display=swap');
         
-        html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-        
-        h1, h2, h3 { 
-            font-family: 'Montserrat', sans-serif !important; 
-            color: #295A63 !important; 
-        }
-        
-        /* Boutons Verts */
-        div.stButton > button:first-child { 
-            background-color: #295A63 !important; 
-            color: white !important; 
-            border-radius: 8px; font-weight: 600; border: none;
-            transition: all 0.2s;
-        }
-        div.stButton > button:first-child:hover { 
-            background-color: #C8A951 !important; 
-            color: black !important;
-            transform: translateY(-2px);
-        }
-
-        .info-card { 
-            background-color: white;
-            padding: 2rem; border-radius: 12px; border: 1px solid #E2E8F0; 
-            min-height: 220px; display: flex; flex-direction: column; justify-content: flex-start;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-        }
-        .info-card:hover {
-            border-color: #C8A951;
-            box-shadow: 0 8px 15px rgba(0,0,0,0.1);
-        }
-
-        .stTextInput > div > div:focus-within {
-            border-color: #295A63 !important;
-            box-shadow: 0 0 0 1px #295A63 !important;
-        }
-        
-        .stMultiSelect span[data-baseweb="tag"] {
-            background-color: rgba(41, 90, 99, 0.1) !important;
-            border: 1px solid rgba(41, 90, 99, 0.3) !important;
-        }
-        .stMultiSelect span[data-baseweb="tag"] span {
-            color: #295A63 !important;
-        }
-        </style>
+        # Encart Login Sobre (Sans fond vert, juste centré propre)
+        st.markdown(f"""
+        <div style="text-align: center;">
+            {get_logo_html(100)}
+            <h1 style="color: #295A63; font-family: 'Montserrat', sans-serif; font-weight: 700; font-size: 2.5em; margin-bottom: 0;">{config.APP_NAME}</h1>
+            <p style="color: #C8A951; font-family: 'Inter', sans-serif; font-weight: 600; letter-spacing: 2px; font-size: 0.9em; margin-top: 5px;">{config.APP_TAGLINE}</p>
+        </div>
         """, unsafe_allow_html=True)
         
+        st.write("") # Spacer
+        
+        # Champ de saisie standard (l'oeil fonctionne nativement ici car pas de on_change)
+        token = st.text_input("🔐 Access Token", type="password")
+        
+        # Bouton Enter explicite
+        if st.button("Enter", type="primary", use_container_width=True):
+            check_password_manual(token)
+
+def main():
+    apply_theme()
+    if st.session_state["authenticated"]:
         render_sidebar()
         p = st.session_state["current_page"]
         if p == "Dashboard": page_dashboard()
@@ -601,7 +547,6 @@ def main():
         elif p == "MIA": page_mia()
         elif p == "Admin": page_admin()
         else: page_dashboard()
-    else:
-        render_login()
+    else: render_login()
 
 if __name__ == "__main__": main()
