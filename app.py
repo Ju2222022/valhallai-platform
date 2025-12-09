@@ -26,7 +26,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Configuration MIA
 if "mia" not in config.AGENTS:
     config.AGENTS["mia"] = {
         "name": "MIA",
@@ -34,7 +33,6 @@ if "mia" not in config.AGENTS:
         "description": "Market Intelligence Agent (Regulatory Watch & Monitoring)."
     }
 
-# Liste de secours (Fallback)
 DEFAULT_DOMAINS = [
     "eur-lex.europa.eu", "europa.eu", "echa.europa.eu", "cenelec.eu", 
     "single-market-economy.ec.europa.eu",
@@ -106,7 +104,6 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
         log_sheet.append_row([now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), report_id, report_type, details, extra_metrics])
     except: pass
 
-# --- HELPERS BDD ---
 def get_markets():
     wb = get_gsheet_workbook()
     if wb:
@@ -167,7 +164,7 @@ def update_domain(idx, name):
         try: wb.worksheet("Watch_domains").update_cell(idx + 1, 1, name); st.cache_data.clear()
         except: pass
 
-# --- GESTION WATCHLISTS ---
+# --- WATCHLISTS ---
 def get_watchlists():
     wb = get_gsheet_workbook()
     watchlists = []
@@ -207,7 +204,7 @@ def delete_watchlist(watchlist_id):
     return False
 
 # =============================================================================
-# 4. API & SEARCH & CACHING
+# 4. API & SEARCH
 # =============================================================================
 def get_api_key(): return st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
 def get_openai_client():
@@ -247,15 +244,11 @@ def extract_text_from_pdf(b):
     except Exception as e: return str(e)
 
 # =============================================================================
-# 5. VISUALISATION (TIMELINE INTELLIGENTE)
+# 5. VISUALISATION
 # =============================================================================
 def display_timeline(items):
-    """Génère la frise chronologique avec zoom intelligent."""
     if not items: return
-    
     timeline_data = []
-    
-    # Extraction des dates
     for item in items:
         if "timeline" in item and item["timeline"]:
             for event in item["timeline"]:
@@ -272,70 +265,40 @@ def display_timeline(items):
                 "Description": item["title"],
                 "Source": item.get("source_name", "Web")
             })
-
     if not timeline_data: return
-
     df = pd.DataFrame(timeline_data)
     df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
     df = df.dropna(subset=["Date"])
-    
     if df.empty: return
 
-    # --- LOGIQUE DE COULEUR ---
     now = datetime.now()
     def get_color(d):
         delta = (d - now).days
-        if delta < 0: return "Gray"      # Passé
-        if delta < 180: return "#e53935" # < 6 mois (Rouge)
-        if delta < 540: return "#fb8c00" # < 18 mois (Orange)
-        return "#1E88E5"                 # > 18 mois (Bleu)
-
+        if delta < 0: return "Gray"
+        if delta < 180: return "#e53935"
+        if delta < 540: return "#fb8c00"
+        return "#1E88E5"
     df["Color"] = df["Date"].apply(get_color)
 
-    # --- CONFIGURATION GRAPHIQUE ---
     fig = px.scatter(
         df, x="Date", y=[1]*len(df), color="Color",
         hover_data=["Task", "Description", "Source"],
         color_discrete_map="identity", height=130
     )
-    
-    # --- CALCUL DE LA FENÊTRE DE VUE (ZOOM) ---
-    # On force la vue à s'arrêter à J + 3 Ans (1095 jours)
-    # Les points au-delà (ex: 2031) existent mais sont hors champ (scrollable)
     view_min = df["Date"].min() - timedelta(days=30)
-    view_max_cap = now + timedelta(days=1095) # Cap à 3 ans
-    
-    # Si le dernier point est AVANT 3 ans, on utilise le dernier point (+ marge)
-    # Si le dernier point est APRÈS 3 ans, on coupe à 3 ans
+    view_max_cap = now + timedelta(days=1095)
     data_max = df["Date"].max()
     view_max = min(data_max + timedelta(days=30), view_max_cap)
-
-    fig.update_xaxes(
-        range=[view_min, view_max], # C'est ici que la magie opère
-        showgrid=True,
-        gridcolor="#eee",
-        zeroline=False
-    )
+    fig.update_xaxes(range=[view_min, view_max], showgrid=True, gridcolor="#eee", zeroline=False)
     fig.update_yaxes(visible=False, showticklabels=False)
-    
-    # Marqueur "Aujourd'hui"
     fig.add_vline(x=now.timestamp() * 1000, line_width=2, line_dash="dot", line_color="#295A63", annotation_text="Today")
-    
-    fig.update_layout(
-        margin=dict(l=10, r=10, t=10, b=10),
-        plot_bgcolor='white',
-        paper_bgcolor='white',
-        showlegend=False
-    )
-    
+    fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor='white', paper_bgcolor='white', showlegend=False)
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
-    
-    # Légende Timeline
     c1, c2, c3, c4 = st.columns(4)
-    with c1: st.caption("🔘 Past Event")
-    with c2: st.caption("🔴 < 6 Months (Urgent)")
-    with c3: st.caption("🟠 < 18 Months (Plan)")
-    with c4: st.caption("🔵 > 18 Months (Radar)")
+    with c1: st.caption("🔘 Past")
+    with c2: st.caption("🔴 < 6 Months")
+    with c3: st.caption("🟠 < 18 Months")
+    with c4: st.caption("🔵 > 18 Months")
 
 # =============================================================================
 # 6. AUTH & PROMPTS
@@ -348,7 +311,7 @@ def check_password_manual(token):
     if token == correct_token:
         st.session_state["authenticated"] = True
         st.rerun()
-    else: st.error("🚫 Access Denied: Invalid Token")
+    else: st.error("🚫 Access Denied")
 
 def check_admin_password():
     if st.session_state.get("admin_pass_input")==st.secrets.get("ADMIN_TOKEN"):
@@ -376,72 +339,48 @@ def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     CONTEXT: User monitoring: "{topic}" | Markets: {', '.join(markets)}
     SELECTED TIMEFRAME: {timeframe_label}
     RAW SEARCH DATA: {raw_search_data}
-    
-    MISSION:
-    1. FILTER by PUBLICATION DATE (The "Signal"). Keep relevant updates within {timeframe_label}.
+    MISSION: 
+    1. FILTER by PUBLICATION DATE. Keep relevant updates within {timeframe_label}.
     2. CLASSIFY & ANALYZE IMPACT.
-    3. ***CRITICAL: EXTRACT FUTURE DATES***
-       - Scan the text for keywords like "Effective date", "Application date", "Transition period ends", "Deadline".
-       - If found, create a specific entry in the 'timeline' list.
-       - If only publication date is found, use it.
+    3. EXTRACT TIMELINE (Effective date, Application date...).
+    OUTPUT JSON: {{ "executive_summary": "...", "items": [ {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["..."], "impact": "High/Medium/Low", "category": "Regulation", "timeline": [] }} ] }}
+    """
+
+def create_impact_analysis_prompt(topic, product_desc, item_summary):
+    return f"""
+    ROLE: Senior Regulatory Affairs Expert.
+    TASK: Assess the specific impact of a regulatory update on a specific product.
     
-    OUTPUT FORMAT (Strict JSON):
-    {{
-        "executive_summary": "Summary...",
-        "items": [
-            {{ 
-                "title": "...", 
-                "date": "YYYY-MM-DD", 
-                "source_name": "...", 
-                "url": "...", 
-                "summary": "...", 
-                "tags": ["Tag1"], 
-                "impact": "High/Medium/Low",
-                "category": "Regulation",
-                "timeline": [
-                    {{"date": "YYYY-MM-DD", "label": "Publication", "desc": "Official Journal"}},
-                    {{"date": "YYYY-MM-DD", "label": "Entry into Force", "desc": "Mandatory compliance"}}
-                ]
-            }}
-        ]
-    }}
+    1. THE PRODUCT: "{product_desc}"
+    2. THE UPDATE (From Watch): "{item_summary}"
+    
+    ANALYSIS REQUIRED:
+    - Does this update apply to the product? (Yes/No/Maybe)
+    - If YES, what specific actions are needed? (e.g. Update Labeling, Re-test, Administrative filing)
+    - Estimated Effort (Low/Medium/High)
+    
+    OUTPUT FORMAT: Concise Markdown. Start with a clear "⚠️ IMPACT CONFIRMED" or "✅ NO IMMEDIATE ACTION".
     """
 
 def get_logo_html(size=50):
     svg = f"""<svg width="{size}" height="{size}" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
-        <rect x="10" y="10" width="38" height="38" rx="8" fill="#295A63"/>
-        <rect x="52" y="10" width="38" height="38" rx="8" fill="#C8A951"/>
-        <rect x="10" y="52" width="38" height="38" rx="8" fill="#1A3C42"/>
-        <rect x="52" y="52" width="38" height="38" rx="8" fill="#E6D5A7"/>
+        <rect x="10" y="10" width="38" height="38" rx="8" fill="#295A63"/><rect x="52" y="10" width="38" height="38" rx="8" fill="#C8A951"/>
+        <rect x="10" y="52" width="38" height="38" rx="8" fill="#1A3C42"/><rect x="52" y="52" width="38" height="38" rx="8" fill="#E6D5A7"/>
     </svg>"""
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
     return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 10px; display: inline-block;">'
 
-# --- THEME CSS ---
 def apply_theme():
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700&family=Inter:wght@400;600&display=swap');
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     h1, h2, h3 { font-family: 'Montserrat', sans-serif !important; color: #295A63 !important; }
-    
-    div.stButton > button:first-child { 
-        background-color: #295A63 !important; color: white !important; 
-        border-radius: 8px; font-weight: 600; width: 100%; border: none;
-    }
+    div.stButton > button:first-child { background-color: #295A63 !important; color: white !important; border-radius: 8px; font-weight: 600; width: 100%; border: none; }
     div.stButton > button:first-child:hover { background-color: #C8A951 !important; color: black !important; }
-    
-    .info-card { 
-        background-color: white; padding: 2rem; border-radius: 12px; border: 1px solid #E2E8F0; 
-        min-height: 220px; display: flex; flex-direction: column; justify-content: flex-start;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-    }
+    .info-card { background-color: white; padding: 2rem; border-radius: 12px; border: 1px solid #E2E8F0; min-height: 220px; display: flex; flex-direction: column; justify-content: flex-start; box-shadow: 0 4px 6px rgba(0,0,0,0.05); }
     .stTextInput > div > div:focus-within { border-color: #295A63 !important; box-shadow: 0 0 0 1px #295A63 !important; }
-    
-    .justified-text {
-        text-align: justify; line-height: 1.6; color: #2c3e50;
-        background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #295A63;
-    }
+    .justified-text { text-align: justify; line-height: 1.6; color: #2c3e50; background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #295A63; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -452,12 +391,10 @@ def page_admin():
     st.title("⚙️ Admin Console"); st.markdown("---")
     if not st.session_state["admin_authenticated"]:
         st.text_input("Admin Password", type="password", key="admin_pass_input", on_change=check_admin_password); return
-    
     wb = get_gsheet_workbook()
     c1, c2 = st.columns([3, 1])
     c1.success(f"✅ DB: {wb.title}" if wb else "❌ DB Error")
     if c2.button("🔄 Refresh"): st.cache_data.clear(); st.rerun()
-
     tm, td = st.tabs(["🌍 Markets", "🕵️‍♂️ Sources"])
     with tm:
         mkts, _ = get_markets()
@@ -481,14 +418,11 @@ def page_admin():
 
 def page_mia():
     st.title("📡 MIA Watch Tower"); st.markdown("---")
-    
     watchlists = get_watchlists()
     wl_names = ["-- New Watch --"] + [w["name"] for w in watchlists]
-    
     with st.expander("📂 Manage Watchlists (Load / Save)", expanded=False):
         c_load, c_action = st.columns([3, 1])
         with c_load: selected_wl = st.selectbox("Load", wl_names, label_visibility="collapsed")
-        
         if selected_wl != "-- New Watch --" and st.session_state.get("current_watchlist") != selected_wl:
             wl_data = next((w for w in watchlists if w["name"] == selected_wl), None)
             if wl_data:
@@ -499,7 +433,6 @@ def page_mia():
                 except: st.session_state["mia_timeframe_index"] = 1
                 st.session_state["current_watchlist"] = selected_wl
                 st.toast(f"✅ Loaded: {selected_wl}")
-        
         if selected_wl != "-- New Watch --":
              with c_action:
                  if st.button("🗑️ Delete", type="secondary"):
@@ -508,8 +441,7 @@ def page_mia():
 
     markets, _ = get_markets()
     col1, col2, col3 = st.columns([2, 2, 1], gap="large")
-    with col1: 
-        topic = st.text_input("🔎 Watch Topic / Product", value=st.session_state.get("mia_topic_val", ""), placeholder="e.g. Cybersecurity for SaMD")
+    with col1: topic = st.text_input("🔎 Watch Topic / Product", value=st.session_state.get("mia_topic_val", ""), placeholder="e.g. Cybersecurity for SaMD")
     with col2: 
         default_mkts = [m for m in st.session_state.get("mia_markets_val", []) if m in markets]
         if not default_mkts and markets: default_mkts = [markets[0]]
@@ -520,14 +452,12 @@ def page_mia():
         days_limit = timeframe_map[selected_label]
 
     launch_label = f"🚀 Launch {selected_wl}" if selected_wl != "-- New Watch --" else "🚀 Launch Monitoring"
-    
     c_launch, c_save = st.columns([1, 4])
-    with c_launch:
-        launch = st.button(launch_label, type="primary")
+    with c_launch: launch = st.button(launch_label, type="primary")
     with c_save:
         if topic:
             with st.popover("💾 Save as Watchlist"):
-                new_wl_name = st.text_input("Name your watchlist", placeholder="e.g. Monthly Cardio Watch")
+                new_wl_name = st.text_input("Name your watchlist")
                 if st.button("Save"):
                     if new_wl_name and topic:
                         save_watchlist(new_wl_name, topic, selected_markets, selected_label)
@@ -543,7 +473,6 @@ def page_mia():
             else:
                 prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
                 json_str = cached_ai_generation(prompt, config.OPENAI_MODEL, 0.1, json_mode=True)
-                
                 try:
                     parsed_data = json.loads(json_str)
                     if "items" not in parsed_data: parsed_data["items"] = []
@@ -552,27 +481,20 @@ def page_mia():
                         if "category" not in item: item["category"] = "News"
                         item["impact"] = item["impact"].capitalize()
                         item["category"] = item["category"].capitalize()
-                    
                     st.session_state["last_mia_results"] = parsed_data
                     log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
-                except Exception as e:
-                    st.error(f"Data processing failed: {str(e)}")
+                except Exception as e: st.error(f"Data processing failed: {str(e)}")
 
     results = st.session_state.get("last_mia_results")
     if results:
         st.markdown("### 📋 Monitoring Report")
-        
-        # TIMELINE VISUALISATION
         if results.get("items"):
             st.markdown("#### 📅 Strategic Timeline")
             display_timeline(results["items"])
-        
         st.markdown("---")
-        
         summary = results.get('executive_summary', 'No summary.')
         st.markdown(f"""<div class="justified-text"><strong>Executive Summary:</strong> {summary}</div>""", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
-
         c_filter1, c_filter2, c_legend = st.columns([2, 2, 1], gap="large")
         with c_filter1:
             all_cat = ["Regulation", "Standard", "Guidance", "Enforcement", "News"]
@@ -582,18 +504,15 @@ def page_mia():
         with c_legend:
             st.write(""); st.write("")
             st.markdown("<div><span style='color:#e53935'>●</span> High <span style='color:#fb8c00'>●</span> Medium <span style='color:#43a047'>●</span> Low <br><span style='font-size:0.8em; color:gray'>📅 Dates refer to publication date</span></div>", unsafe_allow_html=True)
-        
         st.markdown("---")
         items = results.get("items", [])
-        filtered = [i for i in items if i.get('impact','Low').capitalize() in sel_impacts and i.get('category','News').capitalize() in sel_types]
-        
+        filtered = [i for i in items if i.get('impact','Low') in sel_impacts and i.get('category','News') in sel_types]
         if not filtered: st.warning("No updates found matching filters.")
         for item in filtered:
             impact = item.get('impact', 'Low').lower()
             cat = item.get('category', 'News')
             icon = "🔴" if impact == 'high' else "🟡" if impact == 'medium' else "🟢"
             cat_map = {"Regulation":"🏛️", "Standard":"📏", "Guidance":"📘", "Enforcement":"📢", "News":"📰"}
-            
             with st.container():
                 c1, c2 = st.columns([0.1, 0.9])
                 with c1: st.markdown(f"## {icon}")
@@ -601,6 +520,14 @@ def page_mia():
                     st.markdown(f"**[{cat_map.get(cat,'📄')} {cat}]** [{item['title']}]({item['url']})")
                     st.caption(f"📅 {item['date']} | 🏛️ {item['source_name']}")
                     st.write(item['summary'])
+                    # --- BOUTON IMPACT ANALYSIS ---
+                    with st.expander("⚡ Assess Impact on Product (Beta)"):
+                        if st.button("Generate Analysis", key=f"btn_ia_{item['title']}"):
+                            prod_desc = st.session_state.get("mia_topic_val", topic)
+                            with st.spinner("Evaluating impact..."):
+                                ia_prompt = create_impact_analysis_prompt(topic, prod_desc, f"{item['title']}: {item['summary']}")
+                                ia_res = cached_ai_generation(ia_prompt, config.OPENAI_MODEL, 0.1)
+                                st.markdown(ia_res)
                 st.markdown("---")
 
 def page_olivia():
@@ -671,7 +598,6 @@ def page_dashboard():
     st.markdown(f"<span class='sub-text'>{config.APP_SLOGAN}</span>", unsafe_allow_html=True)
     st.markdown("###")
     c1, c2, c3 = st.columns(3)
-    
     with c1: 
         st.markdown(f"""<div class="info-card"><h3>🤖 OlivIA</h3><p class='sub-text'>{config.AGENTS['olivia']['description']}</p></div>""", unsafe_allow_html=True)
         st.write("")
@@ -696,20 +622,16 @@ def render_sidebar():
         if st.button("🏠 Dashboard", use_container_width=True):
              st.session_state["current_page"] = "Dashboard"
              st.rerun()
-
         st.markdown(get_logo_html(), unsafe_allow_html=True)
         st.markdown(f"<div class='logo-text'>{config.APP_NAME}</div>", unsafe_allow_html=True)
         st.markdown("---")
         pages = ["Dashboard", "OlivIA", "EVA", "MIA", "Admin"]
         curr = st.session_state["current_page"]
-        
         idx = pages.index(curr) if curr in pages else 0
         selected = st.radio("NAV", pages, index=idx, label_visibility="collapsed")
-        
         if selected != curr:
             st.session_state["current_page"] = selected
             st.rerun()
-
         st.markdown("---")
         if st.button("Log Out"): logout(); st.rerun()
 
@@ -717,13 +639,7 @@ def render_login():
     _, col, _ = st.columns([1, 1.5, 1])
     with col:
         st.markdown("<br><br><br>", unsafe_allow_html=True)
-        st.markdown(f"""
-        <div style="text-align: center;">
-            {get_logo_html(100)}
-            <h1 style="color: #295A63; font-family: 'Montserrat', sans-serif; font-weight: 700; font-size: 2.5em; margin-bottom: 0;">{config.APP_NAME}</h1>
-            <p style="color: #C8A951; font-family: 'Inter', sans-serif; font-weight: 600; letter-spacing: 2px; font-size: 0.9em; margin-top: 5px;">{config.APP_TAGLINE}</p>
-        </div>
-        """, unsafe_allow_html=True)
+        st.markdown(f"""<div style="text-align: center;">{get_logo_html(100)}<h1 style="color: #295A63; font-family: 'Montserrat', sans-serif; font-weight: 700; font-size: 2.5em; margin-bottom: 0;">{config.APP_NAME}</h1><p style="color: #C8A951; font-family: 'Inter', sans-serif; font-weight: 600; letter-spacing: 2px; font-size: 0.9em; margin-top: 5px;">{config.APP_TAGLINE}</p></div>""", unsafe_allow_html=True)
         st.write("")
         token = st.text_input("🔐 Access Token", type="password")
         if st.button("Enter", type="primary", use_container_width=True):
