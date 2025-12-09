@@ -50,6 +50,7 @@ def init_session_state():
         "authenticated": False,
         "admin_authenticated": False,
         "current_page": "Dashboard",
+        # "dark_mode": False, # <-- SUPPRIMÉ : On gère le thème via CSS uniquement maintenant
         "last_olivia_report": None,
         "last_olivia_id": None, 
         "last_eva_report": None,
@@ -235,18 +236,36 @@ def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     CONTEXT: User monitoring: "{topic}" | Markets: {', '.join(markets)}
     SELECTED TIMEFRAME: {timeframe_label}
     RAW SEARCH DATA: {raw_search_data}
-    MISSION: Filter raw data. Keep only relevant updates.
+    
+    MISSION:
+    1. FILTER by PUBLICATION DATE (The "Signal"): 
+       - Keep items where the ARTICLE/UPDATE ITSELF was published within {timeframe_label}.
+       - INCLUDE: Recent articles discussing old regulations, recent reminders, new interpretations of old laws.
+       - EXCLUDE: Old articles that do not fall within the timeline.
+       
+    2. Analyze Impact (High/Medium/Low) based on the relevance to the user's topic.
+    
+    3. CLASSIFY each item into: "Regulation", "Standard", "Guidance", "Enforcement", "News".
+    
     OUTPUT FORMAT (Strict JSON):
     {{
-        "executive_summary": "Summary...",
+        "executive_summary": "A 2-sentence summary of the activity found in this timeframe.",
         "items": [
-            {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["Tag1"], "impact": "High/Medium/Low", "category": "Regulation" }}
+            {{ 
+                "title": "...", 
+                "date": "YYYY-MM-DD (Publication date of the source)", 
+                "source_name": "...", 
+                "url": "...", 
+                "summary": "...", 
+                "tags": ["Tag1"], 
+                "impact": "High/Medium/Low",
+                "category": "Regulation"
+            }}
         ]
     }}
     """
 
 def get_logo_html(size=50):
-    # Logo SVG avec les couleurs de la marque
     svg = f"""<svg width="{size}" height="{size}" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
         <rect x="10" y="10" width="38" height="38" rx="8" fill="#295A63"/>
         <rect x="52" y="10" width="38" height="38" rx="8" fill="#C8A951"/>
@@ -256,86 +275,69 @@ def get_logo_html(size=50):
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
     return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 10px; display: inline-block;">'
 
-# --- THEME CSS STABLE & BRANDÉ ---
-def apply_theme():
-    # 1. PAGE LOGIN : FOND VERT IMMERSIF
-    if not st.session_state["authenticated"]:
-        st.markdown("""
-        <style>
-        .stApp { background-color: #295A63; }
-        .login-box {
-            background-color: white;
-            padding: 40px;
-            border-radius: 12px;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.3);
-            text-align: center;
-        }
-        </style>
-        """, unsafe_allow_html=True)
+# --- THEME CSS STABLE & BRANDÉ (Pour l'application connectée) ---
+def apply_app_theme():
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700&family=Inter:wght@400;600&display=swap');
     
-    # 2. APPLICATION : FOND CLAIR + TOUCHES DE VERT (Pas de modification brutale de la sidebar)
-    else:
-        st.markdown("""
-        <style>
-        @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700&family=Inter:wght@400;600&display=swap');
-        
-        /* Police Globale */
-        html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-        
-        /* Titres en Vert Valhallai */
-        h1, h2, h3 { 
-            font-family: 'Montserrat', sans-serif !important; 
-            color: #295A63 !important; 
-        }
-        
-        /* Boutons Primaires en Vert Valhallai */
-        div.stButton > button:first-child { 
-            background-color: #295A63 !important; 
-            color: white !important; 
-            border-radius: 8px; 
-            font-weight: 600; 
-            border: none;
-            transition: all 0.2s;
-        }
-        div.stButton > button:first-child:hover { 
-            background-color: #C8A951 !important; /* Or au survol */
-            color: black !important;
-            transform: translateY(-2px);
-        }
+    /* Police Globale */
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+    
+    /* Titres en Vert Valhallai */
+    h1, h2, h3 { 
+        font-family: 'Montserrat', sans-serif !important; 
+        color: #295A63 !important; 
+    }
+    
+    /* Boutons Primaires en Vert Valhallai */
+    div.stButton > button:first-child { 
+        background-color: #295A63 !important; 
+        color: white !important; 
+        border-radius: 8px; 
+        font-weight: 600; 
+        border: none;
+        transition: all 0.2s;
+    }
+    div.stButton > button:first-child:hover { 
+        background-color: #C8A951 !important; /* Or au survol */
+        color: black !important;
+        transform: translateY(-2px);
+    }
 
-        /* Cartes Info (Dashboard & MIA) */
-        .info-card { 
-            background-color: white;
-            padding: 2rem; 
-            border-radius: 12px; 
-            border: 1px solid #E2E8F0; 
-            min-height: 220px; 
-            display: flex; 
-            flex-direction: column; 
-            justify-content: flex-start;
-            box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-        }
-        .info-card:hover {
-            border-color: #C8A951;
-            box-shadow: 0 8px 15px rgba(0,0,0,0.1);
-        }
+    /* Cartes Info */
+    .info-card { 
+        background-color: white;
+        padding: 2rem; 
+        border-radius: 12px; 
+        border: 1px solid #E2E8F0; 
+        min-height: 220px; 
+        display: flex; 
+        flex-direction: column; 
+        justify-content: flex-start;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    }
+    .info-card:hover {
+        border-color: #C8A951;
+        box-shadow: 0 8px 15px rgba(0,0,0,0.1);
+    }
 
-        /* Inputs : Bordure verte au focus */
-        .stTextInput > div > div:focus-within {
-            border-color: #295A63 !important;
-            box-shadow: 0 0 0 1px #295A63 !important;
-        }
-        
-        /* Tags Multiselect en Vert */
-        .stMultiSelect span[data-baseweb="tag"] {
-            background-color: rgba(41, 90, 99, 0.1) !important;
-            border: 1px solid rgba(41, 90, 99, 0.3) !important;
-        }
-        .stMultiSelect span[data-baseweb="tag"] span {
-            color: #295A63 !important;
-        }
-        </style>
-        """, unsafe_allow_html=True)
+    /* Inputs : Bordure verte au focus */
+    .stTextInput > div > div:focus-within {
+        border-color: #295A63 !important;
+        box-shadow: 0 0 0 1px #295A63 !important;
+    }
+    
+    /* Tags Multiselect en Vert */
+    .stMultiSelect span[data-baseweb="tag"] {
+        background-color: rgba(41, 90, 99, 0.1) !important;
+        border: 1px solid rgba(41, 90, 99, 0.3) !important;
+    }
+    .stMultiSelect span[data-baseweb="tag"] span {
+        color: #295A63 !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
 
 # =============================================================================
 # 7. PAGES UI
@@ -386,7 +388,8 @@ def page_mia():
     if st.button("🚀 Launch Monitoring", type="primary"):
         if topic:
             with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
-                query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released recently"
+                clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
+                query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
                 raw_data, error = cached_run_deep_search(query, days=days_limit)
                 if not raw_data: st.error(f"Search failed: {error}")
                 else:
@@ -424,24 +427,13 @@ def page_mia():
             cat_map = {"Regulation":"🏛️", "Standard":"📏", "Guidance":"📘", "Enforcement":"📢", "News":"📰"}
             
             with st.container():
-                st.markdown(f"""
-                <div class="info-card" style="min-height:auto; padding:1.5rem; margin-bottom:1rem;">
-                    <div style="display:flex;">
-                        <div style="font-size:1.5rem; margin-right:15px;">{icon}</div>
-                        <div>
-                            <div style="font-weight:bold; font-size:1.1em; color:#1A202C;">
-                                <a href="{item['url']}" target="_blank" style="text-decoration:none; color:inherit;">
-                                    {cat_map.get(cat,'📄')} {item['title']}
-                                </a>
-                            </div>
-                            <div style="font-size:0.85em; opacity:0.7; margin-bottom:5px; color:#4A5568;">
-                                📅 {item['date']} | 🏛️ {item['source_name']}
-                            </div>
-                            <div style="color:#2D3748;">{item['summary']}</div>
-                        </div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+                c1, c2 = st.columns([0.1, 0.9])
+                with c1: st.markdown(f"## {icon}")
+                with c2:
+                    st.markdown(f"**[{cat_map.get(cat,'📄')} {cat}]** [{item['title']}]({item['url']})")
+                    st.caption(f"📅 {item['date']} | 🏛️ {item['source_name']}")
+                    st.write(item['summary'])
+                st.markdown("---")
 
 def page_olivia():
     st.title("🤖 OlivIA Workspace")
@@ -551,21 +543,66 @@ def render_sidebar():
             st.rerun()
 
         st.markdown("---")
+        # Toggle Dark Mode SUPPRIMÉ pour stabilité
+        # if st.checkbox("🌙 Night Mode", value=st.session_state.get("dark_mode", False)): ...
+        
         if st.button("Log Out"): logout(); st.rerun()
 
+# --- NOUVELLE FONCTION DE LOGIN AVEC COULEURS INVERSÉES ---
 def render_login():
-    # Force le fond Vert uniquement pour cette page
+    # CSS Spécifique pour la page de login : Fond Clair, Boîte Foncée
     st.markdown("""
     <style>
-    .stApp { background-color: #295A63; }
-    .login-box {
-        background-color: white;
-        padding: 40px;
-        border-radius: 12px;
-        box-shadow: 0 15px 30px rgba(0,0,0,0.3);
-        text-align: center;
+    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@700&family=Inter:wght@400;600&display=swap');
+
+    /* 1. Fond de page clair */
+    .stApp { 
+        background-color: #F8F9FA; 
     }
-    .login-box h1 { color: #295A63 !important; }
+
+    /* 2. Encart Vert Foncé */
+    .login-box {
+        background-color: #295A63; /* Vert Valhallai */
+        padding: 40px;
+        border-radius: 16px;
+        box-shadow: 0 20px 40px rgba(41, 90, 99, 0.2);
+        text-align: center;
+        color: white;
+    }
+
+    /* 3. Titre VALHALLAI en Blanc + Montserrat Force */
+    .login-box h1 {
+        font-family: 'Montserrat', sans-serif !important;
+        color: #FFFFFF !important;
+        font-weight: 700;
+        font-size: 2.5em;
+        margin-top: 15px;
+        margin-bottom: 5px;
+    }
+
+    /* 4. Tagline en Or */
+    .login-tagline {
+        color: #C8A951 !important;
+        font-family: 'Inter', sans-serif;
+        font-weight: 600;
+        letter-spacing: 3px;
+        text-transform: uppercase;
+        font-size: 0.9em;
+    }
+    
+    /* 5. Adaptation des champs inputs sur fond foncé */
+    .stTextInput label {
+        color: #E6D5A7 !important; /* Label Or clair */
+    }
+    .stTextInput input {
+        background-color: #1A3C42 !important; /* Fond input plus foncé */
+        color: white !important;
+        border: 1px solid #C8A951 !important; /* Bordure Or */
+    }
+    .stTextInput > div > div:focus-within {
+        border-color: #C8A951 !important;
+        box-shadow: 0 0 0 1px #C8A951 !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -573,19 +610,22 @@ def render_login():
     with c2:
         st.markdown("<br><br><br>", unsafe_allow_html=True)
         with st.container():
+            # Structure HTML de la boîte
             st.markdown(f"""
             <div class="login-box">
-                {get_logo_html(80)}
-                <h1 style="font-family:Montserrat; margin:10px 0;">{config.APP_NAME}</h1>
-                <p style="color:#C8A951; font-weight:bold; letter-spacing:2px; font-size:0.9em;">{config.APP_TAGLINE}</p>
+                {get_logo_html(90)}
+                <h1>{config.APP_NAME}</h1>
+                <p class="login-tagline">{config.APP_TAGLINE}</p>
             </div>
             """, unsafe_allow_html=True)
+            
+            # Input Streamlit (stylisé par le CSS au-dessus)
             st.write("")
-            st.text_input("Access Token", type="password", key="password_input", on_change=check_password)
+            st.text_input("🔐 Security Token", type="password", key="password_input", on_change=check_password)
 
 def main():
-    apply_theme()
     if st.session_state["authenticated"]:
+        apply_app_theme() # Applique le thème clair brandé
         render_sidebar()
         p = st.session_state["current_page"]
         if p == "Dashboard": page_dashboard()
@@ -594,6 +634,7 @@ def main():
         elif p == "MIA": page_mia()
         elif p == "Admin": page_admin()
         else: page_dashboard()
-    else: render_login()
+    else:
+        render_login() # Applique le thème login inversé
 
 if __name__ == "__main__": main()
