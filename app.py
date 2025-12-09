@@ -57,6 +57,10 @@ def init_session_state():
         "last_mia_results": None,
         "editing_market_index": None,
         "editing_domain_index": None,
+        # Variables pour les champs de formulaire MIA (pour permettre le remplissage auto)
+        "mia_topic_val": "",
+        "mia_markets_val": [],
+        "mia_timeframe_index": 1,
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -159,6 +163,65 @@ def update_domain(idx, name):
     if wb:
         try: wb.worksheet("Watch_domains").update_cell(idx + 1, 1, name); st.cache_data.clear()
         except: pass
+
+# --- NOUVELLE GESTION DES WATCHLISTS ---
+def get_watchlists():
+    """Récupère les veilles sauvegardées."""
+    wb = get_gsheet_workbook()
+    watchlists = []
+    if wb:
+        try:
+            try: 
+                sheet = wb.worksheet("Watchlists")
+            except: 
+                # Création auto si inexistant
+                sheet = wb.add_worksheet("Watchlists", 100, 5)
+                sheet.append_row(["ID", "Name", "Topic", "Markets", "Timeframe"])
+                return []
+            
+            # Lecture des données (à partir de la ligne 2 pour sauter le header)
+            rows = sheet.get_all_values()
+            if len(rows) > 1:
+                # On transforme les lignes en liste de dictionnaires
+                for row in rows[1:]:
+                    if len(row) >= 5:
+                        watchlists.append({
+                            "id": row[0],
+                            "name": row[1],
+                            "topic": row[2],
+                            "markets": row[3], # Stocké sous forme "EU, USA"
+                            "timeframe": row[4]
+                        })
+        except Exception as e:
+            print(f"Error reading watchlists: {e}")
+    return watchlists
+
+def save_watchlist(name, topic, markets_list, timeframe):
+    """Sauvegarde une nouvelle veille."""
+    wb = get_gsheet_workbook()
+    if wb:
+        try:
+            sheet = wb.worksheet("Watchlists")
+            new_id = str(uuid.uuid4())[:8] # ID court
+            markets_str = ", ".join(markets_list)
+            sheet.append_row([new_id, name, topic, markets_str, timeframe])
+            return True
+        except Exception as e:
+            st.error(f"Save failed: {e}")
+    return False
+
+def delete_watchlist(watchlist_id):
+    """Supprime une veille."""
+    wb = get_gsheet_workbook()
+    if wb:
+        try:
+            sheet = wb.worksheet("Watchlists")
+            cell = sheet.find(watchlist_id)
+            if cell:
+                sheet.delete_rows(cell.row)
+                return True
+        except: pass
+    return False
 
 # =============================================================================
 # 4. API & SEARCH & CACHING
@@ -282,38 +345,32 @@ def get_logo_html(size=50):
 
 # --- THEME SOBRE ET EFFICACE ---
 def apply_theme():
-    # CSS minimaliste : on surcharge juste les couleurs primaires et les cartes
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700&family=Inter:wght@400;600&display=swap');
 
-    /* Font Globale */
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     
-    /* Titres en Montserrat Vert Valhallai */
     h1, h2, h3 { 
         font-family: 'Montserrat', sans-serif !important; 
         color: #295A63 !important; 
     }
 
-    /* Carte Info */
     .info-card { 
         padding: 2rem; border-radius: 12px; border: 1px solid #E2E8F0; 
         min-height: 220px; display: flex; flex-direction: column; justify-content: flex-start;
         background-color: white;
     }
     
-    /* Boutons Primaires */
     div.stButton > button:first-child { 
         background-color: #295A63 !important; color: white !important; 
         border-radius: 8px; font-weight: 600; width: 100%; border: none;
     }
     div.stButton > button:first-child:hover {
-        background-color: #C8A951 !important; /* Gold au survol */
+        background-color: #C8A951 !important;
         color: black !important;
     }
     
-    /* Inputs au focus */
     .stTextInput > div > div:focus-within {
         border-color: #295A63 !important;
         box-shadow: 0 0 0 1px #295A63 !important;
@@ -344,7 +401,6 @@ def page_admin():
             c1, c2, c3 = st.columns([4, 1, 1])
             c1.info(f"🌍 {m}")
             if c3.button("🗑️", key=f"dm{i}"): remove_market(i); st.rerun()
-            
     with td:
         doms, _ = get_domains()
         st.info("💡 Deep Search Sources.")
@@ -358,29 +414,104 @@ def page_admin():
 
 def page_mia():
     st.title("📡 MIA Watch Tower"); st.markdown("---")
+    
+    # 1. Gestion des Watchlists
+    watchlists = get_watchlists()
+    wl_names = ["-- New Watch --"] + [w["name"] for w in watchlists]
+    
+    col_wl, _ = st.columns([2, 2])
+    with col_wl:
+        selected_wl = st.selectbox("📂 Load Saved Watchlist", wl_names)
+    
+    # Chargement automatique des données de la watchlist
+    if selected_wl != "-- New Watch --":
+        # Trouver la watchlist
+        wl_data = next((w for w in watchlists if w["name"] == selected_wl), None)
+        if wl_data:
+            # On met à jour les valeurs par défaut
+            st.session_state["mia_topic_val"] = wl_data["topic"]
+            # Parsing simple des marchés (stockés en string "EU, USA")
+            saved_markets = [m.strip() for m in wl_data["markets"].split(",")]
+            st.session_state["mia_markets_val"] = saved_markets
+            # Parsing Timeframe
+            timeframe_map = {"⚡ Last 30 Days": 30, "📅 Last 12 Months": 365, "🏛️ Last 3 Years": 1095}
+            # On essaie de retrouver l'index
+            try:
+                st.session_state["mia_timeframe_index"] = list(timeframe_map.keys()).index(wl_data["timeframe"])
+            except:
+                st.session_state["mia_timeframe_index"] = 1
+
+    # 2. Formulaire MIA
     markets, _ = get_markets()
-    c1, c2, c3 = st.columns([2, 2, 1], gap="large")
-    with c1: topic = st.text_input("🔎 Watch Topic / Product", placeholder="e.g. Cybersecurity for SaMD")
-    with c2: selected_markets = st.multiselect("🌍 Markets", markets, default=[markets[0]] if markets else None)
-    with c3:
+    col1, col2, col3 = st.columns([2, 2, 1], gap="large")
+    
+    with col1: 
+        topic = st.text_input(
+            "🔎 Watch Topic / Product", 
+            value=st.session_state.get("mia_topic_val", ""),
+            placeholder="e.g. Cybersecurity for SaMD"
+        )
+    with col2: 
+        # Sécurité pour selected_markets : doit être un sous-ensemble des marchés dispos
+        default_mkts = [m for m in st.session_state.get("mia_markets_val", []) if m in markets]
+        if not default_mkts and markets: default_mkts = [markets[0]]
+            
+        selected_markets = st.multiselect(
+            "🌍 Markets", 
+            markets, 
+            default=default_mkts
+        )
+    with col3:
         timeframe_map = {"⚡ Last 30 Days": 30, "📅 Last 12 Months": 365, "🏛️ Last 3 Years": 1095}
-        selected_label = st.selectbox("⏱️ Timeframe", list(timeframe_map.keys()), index=1)
+        selected_label = st.selectbox(
+            "⏱️ Timeframe", 
+            list(timeframe_map.keys()), 
+            index=st.session_state.get("mia_timeframe_index", 1)
+        )
         days_limit = timeframe_map[selected_label]
 
-    if st.button("🚀 Launch Monitoring", type="primary"):
-        if topic:
-            with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
-                clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
-                query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
-                raw_data, error = cached_run_deep_search(query, days=days_limit)
-                if not raw_data: st.error(f"Search failed: {error}")
+    # Boutons d'action
+    c_launch, c_save = st.columns([1, 4])
+    with c_launch:
+        launch = st.button("🚀 Launch", type="primary")
+    
+    with c_save:
+        # Zone de sauvegarde de la watchlist
+        with st.popover("💾 Save as Watchlist"):
+            new_wl_name = st.text_input("Name your watchlist", placeholder="e.g. Monthly Cardio Watch")
+            if st.button("Save Configuration"):
+                if new_wl_name and topic and selected_markets:
+                    if save_watchlist(new_wl_name, topic, selected_markets, selected_label):
+                        st.success("Saved! Reload page to see it.")
+                        # On force le rechargement pour mettre à jour la liste
+                        st.cache_data.clear()
+                        st.rerun()
                 else:
-                    prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
-                    json_str = cached_ai_generation(prompt, config.OPENAI_MODEL, 0.1, json_mode=True)
-                    if json_str:
-                        st.session_state["last_mia_results"] = json.loads(json_str)
-                        log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
-                    else: st.error("Analysis failed.")
+                    st.error("Please fill all fields.")
+            
+            # Bouton suppression si watchlist chargée
+            if selected_wl != "-- New Watch --":
+                st.write("---")
+                if st.button(f"🗑️ Delete '{selected_wl}'"):
+                    wl_to_del = next((w for w in watchlists if w["name"] == selected_wl), None)
+                    if wl_to_del and delete_watchlist(wl_to_del["id"]):
+                         st.success("Deleted.")
+                         st.cache_data.clear()
+                         st.rerun()
+
+    if launch and topic:
+        with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
+            clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
+            query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
+            raw_data, error = cached_run_deep_search(query, days=days_limit)
+            if not raw_data: st.error(f"Search failed: {error}")
+            else:
+                prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
+                json_str = cached_ai_generation(prompt, config.OPENAI_MODEL, 0.1, json_mode=True)
+                if json_str:
+                    st.session_state["last_mia_results"] = json.loads(json_str)
+                    log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
+                else: st.error("Analysis failed.")
 
     results = st.session_state.get("last_mia_results")
     if results:
