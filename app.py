@@ -458,43 +458,99 @@ def page_eva():
         except: pass
 
 def page_mia():
-    st.title("📡 MIA Watch Tower")
+    agent = config.AGENTS["mia"]
+    st.title(f"{agent['icon']} {agent['name']} Watch Tower")
+    st.markdown(f"<span class='sub-text'>{agent['description']}</span>", unsafe_allow_html=True)
+    st.markdown("---")
+
     markets, _ = get_markets()
-    c1, c2, c3 = st.columns([2, 2, 1], gap="medium")
-    with c1: topic = st.text_input("Topic", placeholder="e.g. Lithium Batteries")
-    with c2: mkts = st.multiselect("Markets", markets, default=[markets[0]] if markets else [])
-    with c3: 
-        time_map = {"⚡ 30 Days": 30, "📅 12 Months": 365}
-        lbl = st.selectbox("Timeframe", list(time_map.keys()), index=1)
+    col1, col2, col3 = st.columns([2, 2, 1], gap="large")
+    
+    with col1: 
+        topic = st.text_input("🔎 Watch Topic / Product", placeholder="e.g. Cybersecurity for SaMD", key="mia_topic")
+    with col2: 
+        # Sécurité pour éviter liste vide
+        safe_markets = [markets[0]] if markets else []
+        selected_markets = st.multiselect("🌍 Markets", markets, default=safe_markets, key="mia_mkts")
+    with col3:
+        # Map des durées
+        timeframe_map = {
+            "⚡ 30 Days": 30, 
+            "📅 12 Months": 365, 
+            "🏛️ 3 Years": 1095
+        }
+        selected_label = st.selectbox("⏱️ Timeframe", list(timeframe_map.keys()), index=1, key="mia_time")
+        days_limit = timeframe_map[selected_label]
 
     if st.button("🚀 Launch Monitoring", type="primary"):
         if topic:
-            with st.spinner("Scanning..."):
-                q = f"Regulations for {topic} in {', '.join(mkts)} recently"
-                raw, err = cached_run_deep_search(q, days=time_map[lbl])
-                if raw:
-                    prompt = create_mia_prompt(topic, mkts, raw, lbl)
-                    js = cached_ai_generation(prompt, config.OPENAI_MODEL, 0.1, True)
-                    if js:
-                        st.session_state["last_mia_results"] = json.loads(js)
-                        st.rerun()
-                else: st.error(err)
+            with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
+                # --- CORRECTION ICI : On injecte la période dans le texte ---
+                # Cela force le système de cache à voir une différence et aide Tavily
+                clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
+                query = f"New regulations and guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
+                
+                # Appel avec le texte modifié ET le paramètre days
+                raw_data, error = cached_run_deep_search(query, days=days_limit)
+                
+                if not raw_data:
+                    st.error(f"Search failed: {error}")
+                else:
+                    prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
+                    json_str = cached_ai_generation(prompt, config.OPENAI_MODEL, 0.1, json_mode=True)
+                    
+                    if json_str:
+                        st.session_state["last_mia_results"] = json.loads(json_str)
+                        log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
+                        st.toast("Monitoring Complete!", icon="🎉")
+                    else: st.error("Analysis failed.")
 
-    res = st.session_state.get("last_mia_results")
-    if res:
-        st.info(f"**Summary:** {res.get('executive_summary','')}")
+    # Affichage des résultats (inchangé)
+    results = st.session_state.get("last_mia_results")
+    if results:
+        st.markdown("### 📋 Monitoring Report")
+        st.info(f"**Executive Summary:** {results.get('executive_summary', 'No summary.')}")
+        
+        c_filter1, c_filter2, c_legend = st.columns([2, 2, 1], gap="large")
+        with c_filter1:
+            all_cat = ["Regulation", "Standard", "Guidance", "Enforcement", "News"]
+            sel_types = st.multiselect("🗂️ Filter by Type", all_cat, default=all_cat, key="mia_type")
+        with c_filter2:
+            sel_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"], key="mia_imp")
+        with c_legend:
+            st.write(""); st.write("")
+            st.markdown("<div><span style='color:#e53935'>●</span> High <span style='color:#fb8c00'>●</span> Medium <span style='color:#43a047'>●</span> Low</div>", unsafe_allow_html=True)
+        
         st.markdown("---")
-        for item in res.get("items", []):
-            icon = "🔴" if item.get('impact')=='High' else "🟢"
+        items = results.get("items", [])
+        filtered = [i for i in items if i.get('impact','Low').capitalize() in sel_impacts and i.get('category','News').capitalize() in sel_types]
+        
+        if not filtered: st.warning("No updates found matching filters.")
+        for item in filtered:
+            impact = item.get('impact', 'Low').lower()
+            cat = item.get('category', 'News')
+            icon = "🔴" if impact=='high' else "🟡" if impact=='medium' else "🟢"
+            cat_map = {"Regulation":"🏛️", "Standard":"📏", "Guidance":"📘", "Enforcement":"📢", "News":"📰"}
+            
             with st.container():
-                c1, c2 = st.columns([0.1, 0.9])
-                with c1: st.markdown(f"## {icon}")
-                with c2:
-                    st.markdown(f"**{item['title']}**")
-                    st.caption(f"{item['date']} | {item['source_name']}")
-                    st.write(item['summary'])
-                    st.markdown(f"[Read Source]({item['url']})")
-                st.markdown("---")
+                st.markdown(f"""
+                <div class="info-card" style="min-height:auto; padding:1.5rem; margin-bottom:1rem;">
+                    <div style="display:flex;">
+                        <div style="font-size:1.5rem; margin-right:15px;">{icon}</div>
+                        <div>
+                            <div style="font-weight:bold; font-size:1.1em;">
+                                <a href="{item['url']}" target="_blank" style="text-decoration:none; color:inherit;">
+                                    {cat_map.get(cat,'📄')} {item['title']}
+                                </a>
+                            </div>
+                            <div style="font-size:0.85em; opacity:0.7; margin-bottom:5px;">
+                                📅 {item['date']} | 🏛️ {item['source_name']}
+                            </div>
+                            <div>{item['summary']}</div>
+                        </div>
+                    </div>
+                </div>
+                """, unsafe_allow_html=True)
 
 def page_admin():
     st.title("⚙️ Admin")
