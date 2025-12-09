@@ -26,7 +26,6 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Configuration MIA
 if "mia" not in config.AGENTS:
     config.AGENTS["mia"] = {
         "name": "MIA",
@@ -166,30 +165,22 @@ def update_domain(idx, name):
         try: wb.worksheet("Watch_domains").update_cell(idx + 1, 1, name); st.cache_data.clear()
         except: pass
 
-# --- GESTION DES WATCHLISTS ---
+# --- GESTION WATCHLISTS ---
 def get_watchlists():
     wb = get_gsheet_workbook()
     watchlists = []
     if wb:
         try:
-            try: 
-                sheet = wb.worksheet("Watchlists")
+            try: sheet = wb.worksheet("Watchlists")
             except: 
                 sheet = wb.add_worksheet("Watchlists", 100, 5)
                 sheet.append_row(["ID", "Name", "Topic", "Markets", "Timeframe"])
                 return []
-            
             rows = sheet.get_all_values()
             if len(rows) > 1:
                 for row in rows[1:]:
                     if len(row) >= 5:
-                        watchlists.append({
-                            "id": row[0],
-                            "name": row[1],
-                            "topic": row[2],
-                            "markets": row[3], 
-                            "timeframe": row[4]
-                        })
+                        watchlists.append({"id":row[0], "name":row[1], "topic":row[2], "markets":row[3], "timeframe":row[4]})
         except: pass
     return watchlists
 
@@ -198,9 +189,7 @@ def save_watchlist(name, topic, markets_list, timeframe):
     if wb:
         try:
             sheet = wb.worksheet("Watchlists")
-            new_id = str(uuid.uuid4())[:8]
-            markets_str = ", ".join(markets_list)
-            sheet.append_row([new_id, name, topic, markets_str, timeframe])
+            sheet.append_row([str(uuid.uuid4())[:8], name, topic, ", ".join(markets_list), timeframe])
             return True
         except: pass
     return False
@@ -211,9 +200,7 @@ def delete_watchlist(watchlist_id):
         try:
             sheet = wb.worksheet("Watchlists")
             cell = sheet.find(watchlist_id)
-            if cell:
-                sheet.delete_rows(cell.row)
-                return True
+            if cell: sheet.delete_rows(cell.row); return True
         except: pass
     return False
 
@@ -261,14 +248,14 @@ def extract_text_from_pdf(b):
 # 5. VISUALISATION (TIMELINE)
 # =============================================================================
 def display_timeline(items):
-    """Génère une frise chronologique interactive avec Plotly."""
+    """Génère la frise chronologique avec projection future forcée."""
     if not items: return
     
     timeline_data = []
     
-    # 1. Extraction des dates depuis les résultats MIA
+    # Extraction des dates
     for item in items:
-        # On cherche si l'item a une sous-timeline ou une date simple
+        # Priorité à la timeline détaillée si l'IA en a trouvé une
         if "timeline" in item and item["timeline"]:
             for event in item["timeline"]:
                 timeline_data.append({
@@ -277,7 +264,7 @@ def display_timeline(items):
                     "Description": f"{item['title']}: {event.get('desc', '')}",
                     "Source": item.get("source_name", "Web")
                 })
-        # Sinon on utilise la date de publication comme point de repère
+        # Sinon date de publication
         elif "date" in item:
             timeline_data.append({
                 "Task": "Publication",
@@ -290,54 +277,60 @@ def display_timeline(items):
 
     df = pd.DataFrame(timeline_data)
     df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
-    df = df.dropna(subset=["Date"]) # On retire les dates invalides
+    df = df.dropna(subset=["Date"])
     
     if df.empty: return
 
-    # 2. Logique de couleurs (Passé/Futur Proche/Futur Lointain)
+    # --- LOGIQUE DE COULEUR ---
     now = datetime.now()
-    
     def get_color(d):
         delta = (d - now).days
         if delta < 0: return "Gray"      # Passé
         if delta < 180: return "#e53935" # < 6 mois (Rouge)
-        if delta < 540: return "#fb8c00" # < 18 mois (Orange - NOUVEAU)
+        if delta < 540: return "#fb8c00" # < 18 mois (Orange)
         return "#1E88E5"                 # > 18 mois (Bleu)
 
     df["Color"] = df["Date"].apply(get_color)
 
-    # 3. Création du Graphique
+    # --- CONFIGURATION GRAPHIQUE ---
     fig = px.scatter(
-        df, 
-        x="Date", 
-        y=[1]*len(df), # Tous sur la même ligne (ou variation si trop de points)
-        color="Color",
+        df, x="Date", y=[1]*len(df), color="Color",
         hover_data=["Task", "Description", "Source"],
-        color_discrete_map="identity",
-        height=150
+        color_discrete_map="identity", height=130
     )
     
-    fig.update_yaxes(visible=False, showticklabels=False)
+    # FORCAGE DE L'AXE X (Horizon 2 Ans minimum)
+    min_date = df["Date"].min() - timedelta(days=30)
+    # On assure de voir au moins jusqu'à dans 2 ans
+    target_future = datetime.now() + timedelta(days=730)
+    max_date = max(df["Date"].max(), target_future)
+    
     fig.update_xaxes(
-        title="",
+        range=[min_date, max_date],
         showgrid=True,
-        rangeslider_visible=False
+        gridcolor="#eee",
+        zeroline=False
     )
+    fig.update_yaxes(visible=False, showticklabels=False)
     
-    # Ligne verticale "Aujourd'hui"
-    fig.add_vline(x=now.timestamp() * 1000, line_width=1, line_dash="dash", line_color="green", annotation_text="Today")
+    # Marqueur "Aujourd'hui"
+    fig.add_vline(x=now.timestamp() * 1000, line_width=2, line_dash="dot", line_color="#295A63", annotation_text="Today")
     
     fig.update_layout(
-        margin=dict(l=20, r=20, t=30, b=20),
-        plot_bgcolor='rgba(0,0,0,0)',
-        paper_bgcolor='rgba(0,0,0,0)',
+        margin=dict(l=10, r=10, t=10, b=10),
+        plot_bgcolor='white',
+        paper_bgcolor='white',
         showlegend=False
     )
     
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
     
     # Légende Timeline
-    st.caption("📅 Timeline Legend: 🔘 Past | 🔴 < 6 Months | 🟠 < 18 Months | 🔵 > 18 Months")
+    c1, c2, c3, c4 = st.columns(4)
+    with c1: st.caption("🔘 Past Event")
+    with c2: st.caption("🔴 < 6 Months (Urgent)")
+    with c3: st.caption("🟠 < 18 Months (Plan)")
+    with c4: st.caption("🔵 > 18 Months (Radar)")
 
 # =============================================================================
 # 6. AUTH & PROMPTS
@@ -347,12 +340,10 @@ def check_password_manual(token):
     if not correct_token:
         st.session_state["authenticated"] = True
         st.rerun()
-    
     if token == correct_token:
         st.session_state["authenticated"] = True
         st.rerun()
-    else:
-        st.error("🚫 Access Denied: Invalid Token")
+    else: st.error("🚫 Access Denied: Invalid Token")
 
 def check_admin_password():
     if st.session_state.get("admin_pass_input")==st.secrets.get("ADMIN_TOKEN"):
@@ -375,7 +366,6 @@ def create_eva_prompt(ctx, doc):
     Structure: 1. Verdict, 2. Gap Table (Requirement|Status|Evidence|Missing), 3. Risks, 4. Recommendations."""
 
 def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
-    # Prompt enrichi pour demander la Timeline
     return f"""
     ROLE: You are MIA (Market Intelligence Agent).
     CONTEXT: User monitoring: "{topic}" | Markets: {', '.join(markets)}
@@ -383,10 +373,12 @@ def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     RAW SEARCH DATA: {raw_search_data}
     
     MISSION:
-    1. FILTER by PUBLICATION DATE (The "Signal").
-    2. Analyze Impact (High/Medium/Low).
-    3. CLASSIFY (Regulation, Standard, Guidance, Enforcement, News).
-    4. EXTRACT TIMELINE: Look for key dates in the text (e.g. "Effective date", "Application date", "Transition end").
+    1. FILTER by PUBLICATION DATE (The "Signal"). Keep relevant updates within {timeframe_label}.
+    2. CLASSIFY & ANALYZE IMPACT.
+    3. ***CRITICAL: EXTRACT FUTURE DATES***
+       - Scan the text for keywords like "Effective date", "Application date", "Transition period ends", "Deadline".
+       - If found, create a specific entry in the 'timeline' list.
+       - If only publication date is found, use it.
     
     OUTPUT FORMAT (Strict JSON):
     {{
@@ -403,7 +395,7 @@ def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
                 "category": "Regulation",
                 "timeline": [
                     {{"date": "YYYY-MM-DD", "label": "Publication", "desc": "Official Journal"}},
-                    {{"date": "YYYY-MM-DD", "label": "Entry into Force", "desc": "..."}}
+                    {{"date": "YYYY-MM-DD", "label": "Entry into Force", "desc": "Mandatory compliance"}}
                 ]
             }}
         ]
@@ -428,32 +420,22 @@ def apply_theme():
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
     h1, h2, h3 { font-family: 'Montserrat', sans-serif !important; color: #295A63 !important; }
     
-    /* Boutons */
     div.stButton > button:first-child { 
         background-color: #295A63 !important; color: white !important; 
         border-radius: 8px; font-weight: 600; width: 100%; border: none;
     }
     div.stButton > button:first-child:hover { background-color: #C8A951 !important; color: black !important; }
     
-    /* Cartes */
     .info-card { 
         background-color: white; padding: 2rem; border-radius: 12px; border: 1px solid #E2E8F0; 
         min-height: 220px; display: flex; flex-direction: column; justify-content: flex-start;
         box-shadow: 0 4px 6px rgba(0,0,0,0.05);
     }
-    
-    /* Inputs */
     .stTextInput > div > div:focus-within { border-color: #295A63 !important; box-shadow: 0 0 0 1px #295A63 !important; }
     
-    /* Text Justifié (Classe Custom) */
     .justified-text {
-        text-align: justify;
-        line-height: 1.6;
-        color: #2c3e50;
-        background-color: #f8f9fa;
-        padding: 15px;
-        border-radius: 8px;
-        border-left: 4px solid #295A63;
+        text-align: justify; line-height: 1.6; color: #2c3e50;
+        background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #295A63;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -498,20 +480,26 @@ def page_mia():
     watchlists = get_watchlists()
     wl_names = ["-- New Watch --"] + [w["name"] for w in watchlists]
     
-    col_wl, _ = st.columns([2, 2])
-    with col_wl:
-        selected_wl = st.selectbox("📂 Load Saved Watchlist", wl_names)
-    
-    if selected_wl != "-- New Watch --" and st.session_state.get("current_watchlist") != selected_wl:
-        wl_data = next((w for w in watchlists if w["name"] == selected_wl), None)
-        if wl_data:
-            st.session_state["mia_topic_val"] = wl_data["topic"]
-            st.session_state["mia_markets_val"] = [m.strip() for m in wl_data["markets"].split(",")]
-            timeframe_map = {"⚡ Last 30 Days": 30, "📅 Last 12 Months": 365, "🏛️ Last 3 Years": 1095}
-            try: st.session_state["mia_timeframe_index"] = list(timeframe_map.keys()).index(wl_data["timeframe"])
-            except: st.session_state["mia_timeframe_index"] = 1
-            st.session_state["current_watchlist"] = selected_wl
-            st.toast(f"✅ Loaded: {selected_wl}")
+    with st.expander("📂 Manage Watchlists (Load / Save)", expanded=False):
+        c_load, c_action = st.columns([3, 1])
+        with c_load: selected_wl = st.selectbox("Load", wl_names, label_visibility="collapsed")
+        
+        if selected_wl != "-- New Watch --" and st.session_state.get("current_watchlist") != selected_wl:
+            wl_data = next((w for w in watchlists if w["name"] == selected_wl), None)
+            if wl_data:
+                st.session_state["mia_topic_val"] = wl_data["topic"]
+                st.session_state["mia_markets_val"] = [m.strip() for m in wl_data["markets"].split(",")]
+                timeframe_map = {"⚡ Last 30 Days": 30, "📅 Last 12 Months": 365, "🏛️ Last 3 Years": 1095}
+                try: st.session_state["mia_timeframe_index"] = list(timeframe_map.keys()).index(wl_data["timeframe"])
+                except: st.session_state["mia_timeframe_index"] = 1
+                st.session_state["current_watchlist"] = selected_wl
+                st.toast(f"✅ Loaded: {selected_wl}")
+        
+        if selected_wl != "-- New Watch --":
+             with c_action:
+                 if st.button("🗑️ Delete", type="secondary"):
+                     wl = next((w for w in watchlists if w["name"] == selected_wl), None)
+                     if wl and delete_watchlist(wl["id"]): st.success("Deleted."); st.cache_data.clear(); st.rerun()
 
     markets, _ = get_markets()
     col1, col2, col3 = st.columns([2, 2, 1], gap="large")
@@ -528,55 +516,48 @@ def page_mia():
 
     launch_label = f"🚀 Launch {selected_wl}" if selected_wl != "-- New Watch --" else "🚀 Launch Monitoring"
     
-    c_launch, c_save = st.columns([1, 4])
-    with c_launch:
-        launch = st.button(launch_label, type="primary")
-    with c_save:
+    if st.button(launch_label, type="primary"):
         if topic:
-            with st.popover("💾 Save as Watchlist"):
-                new_wl_name = st.text_input("Name your watchlist", placeholder="e.g. Monthly Cardio Watch")
-                if st.button("Save"):
-                    if new_wl_name and topic:
-                        save_watchlist(new_wl_name, topic, selected_markets, selected_label)
-                        st.toast("Watchlist Saved!", icon="💾")
-                        st.cache_data.clear()
-
-    if launch and topic:
-        with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
-            clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
-            query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
-            raw_data, error = cached_run_deep_search(query, days=days_limit)
-            if not raw_data: st.error(f"Search failed: {error}")
-            else:
-                prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
-                json_str = cached_ai_generation(prompt, config.OPENAI_MODEL, 0.1, json_mode=True)
-                
-                try:
-                    parsed_data = json.loads(json_str)
-                    if "items" not in parsed_data: parsed_data["items"] = []
-                    for item in parsed_data["items"]:
-                        if "impact" not in item: item["impact"] = "Low"
-                        if "category" not in item: item["category"] = "News"
-                        item["impact"] = item["impact"].capitalize()
-                        item["category"] = item["category"].capitalize()
-                    
-                    st.session_state["last_mia_results"] = parsed_data
-                    log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
-                except Exception as e:
-                    st.error(f"Data processing failed: {str(e)}")
+            with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
+                clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
+                query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
+                raw_data, error = cached_run_deep_search(query, days=days_limit)
+                if not raw_data: st.error(f"Search failed: {error}")
+                else:
+                    prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
+                    json_str = cached_ai_generation(prompt, config.OPENAI_MODEL, 0.1, json_mode=True)
+                    try:
+                        parsed = json.loads(json_str)
+                        if "items" not in parsed: parsed["items"] = []
+                        for item in parsed["items"]:
+                            if "impact" not in item: item["impact"] = "Low"
+                            if "category" not in item: item["category"] = "News"
+                            item["impact"] = item["impact"].capitalize()
+                            item["category"] = item["category"].capitalize()
+                        st.session_state["last_mia_results"] = parsed
+                        log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
+                    except Exception as e: st.error(f"Data failed: {e}")
 
     results = st.session_state.get("last_mia_results")
     if results:
+        # Zone de Sauvegarde
+        with st.expander("💾 Save as Watchlist"):
+            new_wl_name = st.text_input("Name your watchlist")
+            if st.button("Save Configuration"):
+                if new_wl_name and topic:
+                    save_watchlist(new_wl_name, topic, selected_markets, selected_label)
+                    st.toast("Saved!", icon="💾")
+                    st.cache_data.clear()
+
         st.markdown("### 📋 Monitoring Report")
         
-        # TIMELINE VISUALISATION (PHASE 2)
+        # --- TIMELINE VISUALISATION (PHASE 2) ---
         if results.get("items"):
             st.markdown("#### 📅 Strategic Timeline")
-            # On passe tous les items pour construire la frise
             display_timeline(results["items"])
+        # ----------------------------------------
         
         st.markdown("---")
-        
         summary = results.get('executive_summary', 'No summary.')
         st.markdown(f"""<div class="justified-text"><strong>Executive Summary:</strong> {summary}</div>""", unsafe_allow_html=True)
         st.markdown("<br>", unsafe_allow_html=True)
@@ -589,10 +570,9 @@ def page_mia():
             sel_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"])
         with c_legend:
             st.write(""); st.write("")
-            st.markdown("<div><span style='color:#e53935'>●</span> High <span style='color:#fb8c00'>●</span> Medium <span style='color:#43a047'>●</span> Low <br><span style='font-size:0.8em; color:gray'>📅 Dates refer to publication date</span></div>", unsafe_allow_html=True)
+            st.markdown("<div><span style='color:#e53935'>●</span> High <span style='color:#fb8c00'>●</span> Medium <span style='color:#43a047'>●</span> Low <br><span style='font-size:0.8em; color:gray'>📅 Dates = Publication</span></div>", unsafe_allow_html=True)
         
         st.markdown("---")
-        
         items = results.get("items", [])
         filtered = [i for i in items if i.get('impact','Low') in sel_impacts and i.get('category','News') in sel_types]
         
@@ -711,7 +691,6 @@ def render_sidebar():
         st.markdown("---")
         pages = ["Dashboard", "OlivIA", "EVA", "MIA", "Admin"]
         curr = st.session_state["current_page"]
-        
         idx = pages.index(curr) if curr in pages else 0
         selected = st.radio("NAV", pages, index=idx, label_visibility="collapsed")
         
