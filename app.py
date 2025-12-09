@@ -24,6 +24,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Configuration MIA
 if "mia" not in config.AGENTS:
     config.AGENTS["mia"] = {
         "name": "MIA",
@@ -31,7 +32,7 @@ if "mia" not in config.AGENTS:
         "description": "Market Intelligence Agent (Regulatory Watch & Monitoring)."
     }
 
-# Liste de secours
+# Liste de secours (Fallback)
 DEFAULT_DOMAINS = [
     "eur-lex.europa.eu", "europa.eu", "echa.europa.eu", "cenelec.eu", 
     "single-market-economy.ec.europa.eu",
@@ -49,8 +50,7 @@ def init_session_state():
         "authenticated": False,
         "admin_authenticated": False,
         "current_page": "Dashboard",
-        # REGLAGE 1 : False par défaut (Mode Clair pour l'app)
-        "dark_mode": False, 
+        "dark_mode": False, # Mode clair par défaut pour la stabilité de l'app de travail
         "last_olivia_report": None,
         "last_olivia_id": None, 
         "last_eva_report": None,
@@ -253,6 +253,7 @@ def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     """
 
 def get_logo_html():
+    # Logo avec fond transparent adapté pour fond sombre ou clair
     svg = """<svg width="60" height="60" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
         <rect x="10" y="10" width="38" height="38" rx="8" fill="#295A63"/>
         <rect x="52" y="10" width="38" height="38" rx="8" fill="#C8A951"/>
@@ -262,55 +263,68 @@ def get_logo_html():
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
     return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 15px;">'
 
-# --- THEME INTELLIGENT (LOGIN = DARK, APP = USER CHOICE) ---
+# --- THEME DESIGN & BRANDING (NO LAG) ---
 def apply_theme():
-    # Logique : Si non authentifié -> Force Dark Mode (Image de marque)
-    # Sinon -> Respecte le choix utilisateur (Light par défaut)
+    # 1. SI LOGIN : Fond Vert Valhallai + Centrage
     if not st.session_state["authenticated"]:
-        mode = "dark"
+        bg_color = "#295A63"
+        txt_color = "#FFFFFF"
+        # CSS spécifique pour la page de login
+        st.markdown(f"""
+        <style>
+        /* Force le fond vert sur toute la page */
+        .stApp {{
+            background-color: {bg_color};
+            color: {txt_color};
+        }}
+        /* Champs de saisie sur fond sombre */
+        .stTextInput input {{
+            background-color: #1A3C42 !important;
+            color: white !important;
+            border: 1px solid #C8A951 !important;
+        }}
+        /* Labels en blanc */
+        .stTextInput label, h1, p {{
+            color: white !important;
+        }}
+        </style>
+        """, unsafe_allow_html=True)
+    
+    # 2. SI CONNECTÉ : Fond standard + Accents Valhallai
     else:
-        mode = "dark" if st.session_state["dark_mode"] else "light"
+        # On définit les couleurs selon le mode sombre/clair choisi par l'utilisateur
+        # Mais on force nos couleurs de marque sur les boutons et titres
+        st.markdown("""
+        <style>
+        /* Import Police */
+        @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700&family=Inter:wght@400;500;600&display=swap');
         
-    c = config.COLORS[mode]
-    
-    st.markdown(f"""
-    <style>
-    /* Application des couleurs de fond */
-    .stApp {{
-        background-color: {c['background']};
-        color: {c['text']};
-    }}
-    
-    /* Titres aux couleurs de la marque */
-    h1, h2, h3 {{ color: {c['primary']} !important; }}
-    
-    /* Input Fields (Adaptation au thème) */
-    .stTextInput input, .stTextArea textarea, .stSelectbox div[data-baseweb="select"] {{
-        background-color: {c['card']} !important;
-        color: {c['text']} !important;
-        border: 1px solid {c['border']};
-    }}
-    
-    /* Carte Info Dashboard */
-    .info-card {{ 
-        background-color: {c['card']}; 
-        padding: 2rem; border-radius: 12px; border: 1px solid {c['border']}; 
-        min-height: 220px; display: flex; flex-direction: column; justify-content: flex-start;
-    }}
-    
-    /* Boutons Primaires (Vert Valhallai ou Or selon thème) */
-    div.stButton > button:first-child {{ 
-        background-color: {c['primary']} !important; 
-        color: {c['button_text']} !important; 
-        border-radius: 8px; font-weight: 600; width: 100%; border: none;
-    }}
-    div.stButton > button:first-child:hover {{ filter: brightness(1.1); }}
-    
-    /* Harmonisation des textes */
-    p, li, span {{ color: {c['text']}; }}
-    
-    </style>
-    """, unsafe_allow_html=True)
+        html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+        
+        /* Titres en Vert Valhallai ou Or selon le mode */
+        h1, h2, h3 { 
+            font-family: 'Montserrat', sans-serif !important; 
+            color: #295A63 !important; 
+        }
+        @media (prefers-color-scheme: dark) {
+            h1, h2, h3 { color: #C8A951 !important; }
+        }
+
+        /* BOUTONS VERTS (Signature Brand) */
+        div.stButton > button:first-child { 
+            background-color: #295A63 !important; 
+            color: white !important; 
+            border-radius: 8px; font-weight: 600; border: none;
+        }
+        div.stButton > button:first-child:hover { filter: brightness(1.1); }
+        
+        /* Info Cards */
+        .info-card { 
+            padding: 2rem; border-radius: 12px; border: 1px solid #E2E8F0; 
+            min-height: 220px; display: flex; flex-direction: column; justify-content: flex-start;
+        }
+        </style>
+        """, unsafe_allow_html=True)
 
 # =============================================================================
 # 7. PAGES UI
@@ -370,7 +384,6 @@ def page_mia():
                     if json_str:
                         st.session_state["last_mia_results"] = json.loads(json_str)
                         log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
-                        # Pas de rerun ici
                     else: st.error("Analysis failed.")
 
     results = st.session_state.get("last_mia_results")
@@ -519,28 +532,23 @@ def render_sidebar():
             st.rerun()
 
         st.markdown("---")
-        
-        # Toggle Dark Mode (Applique le CSS dynamique)
-        is_dark = st.checkbox("🌙 Night Mode", value=st.session_state["dark_mode"])
-        if is_dark != st.session_state["dark_mode"]:
-            st.session_state["dark_mode"] = is_dark
-            st.rerun()
-
-        st.markdown("---")
         if st.button("Log Out"): logout(); st.rerun()
 
 def render_login():
-    # Centrage Login
-    c1, c2, c3 = st.columns([1, 2, 1])
-    with c2:
-        st.markdown("<br><br><br>", unsafe_allow_html=True)
+    # Centrage parfait
+    _, col, _ = st.columns([1, 2, 1])
+    with col:
+        st.markdown("<br><br>", unsafe_allow_html=True)
+        # Logo centré
         st.markdown(f"<div style='text-align:center'>{get_logo_html()}</div>", unsafe_allow_html=True)
-        st.markdown(f"<h1 style='text-align: center; color: #295A63;'>{config.APP_NAME}</h1>", unsafe_allow_html=True)
-        st.markdown(f"<p style='text-align: center; color: #666;'>{config.APP_TAGLINE}</p>", unsafe_allow_html=True)
+        # Titre centré
+        st.markdown(f"<h1 style='text-align: center; color: #FFFFFF;'>{config.APP_NAME}</h1>", unsafe_allow_html=True)
+        st.markdown(f"<p style='text-align: center; color: #CCCCCC;'>{config.APP_TAGLINE}</p>", unsafe_allow_html=True)
+        st.write("")
         st.text_input("Token", type="password", key="password_input", on_change=check_password)
 
 def main():
-    apply_theme() # Applique le CSS selon si on est en Login (Dark) ou App (User Choice)
+    apply_theme()
     if st.session_state["authenticated"]:
         render_sidebar()
         p = st.session_state["current_page"]
