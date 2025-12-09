@@ -24,13 +24,13 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- PALETTE DE COULEURS (Hardcoded pour la stabilité du design) ---
-C_GREEN_DARK = "#1A3C42"   # Fond sombre / Sidebar Dark
-C_GREEN_MAIN = "#295A63"   # Couleur Principale (Boutons, Titres)
-C_GOLD       = "#C8A951"   # Accent (Focus, Hover)
-C_GOLD_LIGHT = "#E6D5A7"   # Fond léger
-C_BG_LIGHT   = "#F8F9FA"   # Fond d'écran Light
-C_TEXT_MAIN  = "#1E293B"   # Texte principal
+# --- PALETTE DE COULEURS ---
+C_GREEN_DARK = "#1A3C42"
+C_GREEN_MAIN = "#295A63"
+C_GOLD       = "#C8A951"
+C_GOLD_LIGHT = "#E6D5A7"
+C_BG_LIGHT   = "#F8F9FA"
+C_TEXT_MAIN  = "#1E293B"
 
 # Configuration MIA
 if "mia" not in config.AGENTS:
@@ -46,12 +46,10 @@ DEFAULT_DOMAINS = [
 ]
 
 # =============================================================================
-# 1. STYLE CSS AVANCÉ (THEME ENGINE)
+# 1. STYLE CSS (THEME ENGINE)
 # =============================================================================
 def inject_custom_css():
     """Injecte le CSS pour surcharger le thème Streamlit par défaut."""
-    
-    # Détection du mode pour ajuster quelques couleurs
     is_dark = st.session_state.get("dark_mode", False)
     bg_color = "#0e1117" if is_dark else C_BG_LIGHT
     card_bg = "#262730" if is_dark else "#FFFFFF"
@@ -59,10 +57,8 @@ def inject_custom_css():
     
     st.markdown(f"""
     <style>
-    /* IMPORTS FONTS */
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700;800&family=Inter:wght@400;500;600&display=swap');
 
-    /* --- GLOBAL --- */
     .stApp {{
         background-color: {bg_color};
         color: {text_color};
@@ -75,18 +71,15 @@ def inject_custom_css():
         font-weight: 700 !important;
     }}
     
-    /* En Dark Mode, on passe les titres en Or pour la lisibilité */
     @media (prefers-color-scheme: dark) {{
         h1, h2, h3 {{ color: {C_GOLD} !important; }}
     }}
     
-    /* --- SIDEBAR --- */
     [data-testid="stSidebar"] {{
         background-color: {card_bg};
         border-right: 1px solid rgba(41, 90, 99, 0.1);
     }}
 
-    /* --- BOUTONS (Override du Rouge Streamlit) --- */
     div.stButton > button {{
         background-color: {C_GREEN_MAIN} !important;
         color: white !important;
@@ -103,45 +96,37 @@ def inject_custom_css():
         background-color: {C_GOLD} !important;
         color: white !important;
         transform: translateY(-2px);
-        box-shadow: 0 4px 10px rgba(0,0,0,0.15) !important;
     }}
 
-    /* Boutons secondaires (Ghost) */
     div.stButton > button[kind="secondary"] {{
         background-color: transparent !important;
         border: 1px solid {C_GREEN_MAIN} !important;
         color: {C_GREEN_MAIN} !important;
     }}
 
-    /* --- INPUTS & CHAMPS --- */
-    /* On enlève la bordure rouge par défaut au focus */
     .stTextInput > div > div {{
         border-radius: 8px !important;
         border: 1px solid #E0E0E0 !important;
     }}
     
-    /* Focus : Vert Valhallai */
     .stTextInput > div > div:focus-within {{
         border-color: {C_GREEN_MAIN} !important;
         box-shadow: 0 0 0 1px {C_GREEN_MAIN} !important;
     }}
     
-    /* Selectbox & Multiselect focus */
     .stSelectbox > div > div[aria-expanded="true"], 
     .stMultiSelect > div > div[aria-expanded="true"] {{
         border-color: {C_GREEN_MAIN} !important;
     }}
 
-    /* Tags dans Multiselect (Les fameux rouges) -> On les met en Vert/Or */
     .stMultiSelect span[data-baseweb="tag"] {{
-        background-color: {C_GREEN_MAIN}20 !important; /* 20% opacité */
+        background-color: {C_GREEN_MAIN}20 !important;
         border: 1px solid {C_GREEN_MAIN}40 !important;
     }}
     .stMultiSelect span[data-baseweb="tag"] span {{
         color: {C_GREEN_MAIN} !important;
     }}
 
-    /* --- CARDS (Custom Class) --- */
     .info-card {{
         background-color: {card_bg};
         padding: 2rem;
@@ -161,7 +146,6 @@ def inject_custom_css():
         border-color: {C_GOLD};
     }}
     
-    /* --- LOGIN PAGE SPECIAL --- */
     .login-wrapper {{
         position: fixed;
         top: 0; left: 0; width: 100%; height: 100%;
@@ -181,7 +165,7 @@ def inject_custom_css():
     """, unsafe_allow_html=True)
 
 # =============================================================================
-# INITIALISATION
+# 2. SESSION STATE
 # =============================================================================
 def init_session_state():
     defaults = {
@@ -204,7 +188,7 @@ def init_session_state():
 init_session_state()
 
 # =============================================================================
-# DATA LAYER
+# 3. GESTION DES DONNÉES
 # =============================================================================
 @st.cache_resource
 def get_gsheet_workbook():
@@ -215,7 +199,7 @@ def get_gsheet_workbook():
         if "-----BEGIN" not in raw_key: raw_key = "-----BEGIN PRIVATE KEY-----\n" + raw_key.strip()
         if "-----END" not in raw_key: raw_key = raw_key.strip() + "\n-----END PRIVATE KEY-----"
         
-        creds_dict = {
+        creds = {
             "type": sa_secrets["type"], "project_id": sa_secrets["project_id"],
             "private_key_id": sa_secrets["private_key_id"], "private_key": raw_key,
             "client_email": sa_secrets["client_email"], "client_id": sa_secrets["client_id"],
@@ -223,7 +207,7 @@ def get_gsheet_workbook():
             "auth_provider_x509_cert_url": sa_secrets["auth_provider_x509_cert_url"],
             "client_x509_cert_url": sa_secrets["client_x509_cert_url"]
         }
-        gc = gspread.service_account_from_dict(creds_dict)
+        gc = gspread.service_account_from_dict(creds)
         return gc.open_by_url(st.secrets["gsheets"]["url"])
     except: return None
 
@@ -246,6 +230,26 @@ def get_markets():
         except: pass
     return config.DEFAULT_MARKETS, False
 
+def add_market(name):
+    wb = get_gsheet_workbook()
+    if wb:
+        try:
+            if name not in wb.sheet1.col_values(1): wb.sheet1.append_row([name]); st.cache_data.clear(); return True
+        except: pass
+    return False
+
+def remove_market(idx):
+    wb = get_gsheet_workbook()
+    if wb:
+        try: wb.sheet1.delete_rows(idx + 1); st.cache_data.clear()
+        except: pass
+
+def update_market(idx, name):
+    wb = get_gsheet_workbook()
+    if wb:
+        try: wb.sheet1.update_cell(idx + 1, 1, name); st.cache_data.clear()
+        except: pass
+
 def get_domains():
     wb = get_gsheet_workbook()
     if wb:
@@ -258,8 +262,29 @@ def get_domains():
         except: pass
     return DEFAULT_DOMAINS, False
 
+def add_domain(name):
+    wb = get_gsheet_workbook()
+    if wb:
+        try:
+            sh = wb.worksheet("Watch_domains")
+            if name not in sh.col_values(1): sh.append_row([name]); st.cache_data.clear(); return True
+        except: pass
+    return False
+
+def remove_domain(idx):
+    wb = get_gsheet_workbook()
+    if wb:
+        try: wb.worksheet("Watch_domains").delete_rows(idx + 1); st.cache_data.clear()
+        except: pass
+
+def update_domain(idx, name):
+    wb = get_gsheet_workbook()
+    if wb:
+        try: wb.worksheet("Watch_domains").update_cell(idx + 1, 1, name); st.cache_data.clear()
+        except: pass
+
 # =============================================================================
-# API LAYER
+# 4. API & SEARCH & CACHING
 # =============================================================================
 def get_api_key(): return st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
 def get_openai_client():
@@ -299,7 +324,7 @@ def extract_text_from_pdf(b):
     except Exception as e: return str(e)
 
 # =============================================================================
-# LOGIC & PROMPTS
+# 5. AUTH & PROMPTS
 # =============================================================================
 def check_password():
     if not st.secrets.get("APP_TOKEN"): st.session_state["authenticated"]=True; return
@@ -307,8 +332,14 @@ def check_password():
         st.session_state["authenticated"]=True; del st.session_state["password_input"]
     else: st.error("Access Denied")
 
+def check_admin_password():
+    if st.session_state.get("admin_pass_input")==st.secrets.get("ADMIN_TOKEN"):
+        st.session_state["admin_authenticated"]=True; del st.session_state["admin_pass_input"]
+    else: st.error("Denied")
+
 def logout():
     st.session_state["authenticated"]=False
+    st.session_state["admin_authenticated"]=False
     st.session_state["current_page"]="Dashboard"
 
 def create_olivia_prompt(desc, countries):
@@ -321,6 +352,7 @@ def create_eva_prompt(ctx, doc):
     Mission: Compliance Audit. Output: Strict English Markdown.
     Structure: 1. Verdict, 2. Gap Table (Requirement|Status|Evidence|Missing), 3. Risks, 4. Recommendations."""
 
+# --- PROMPT MIA REVU (Priorité DATE DE PUBLICATION) ---
 def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     return f"""
     ROLE: You are MIA (Market Intelligence Agent).
@@ -329,200 +361,112 @@ def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     RAW SEARCH DATA: {raw_search_data}
     
     MISSION:
-    1. ANALYZE dates carefully. 
-       - If the user selected "Last 30 Days", ONLY keep updates where the regulation/news ITSELF happened in the last 30 days.
-       - Ignore old regulations that are just being discussed in a recent article (unless there is a NEW amendment or enforcement).
-    2. Filter raw data to keep only RELEVANT updates matching the timeframe.
-    3. Analyze Impact (High/Medium/Low).
-    4. CLASSIFY each item into: "Regulation", "Standard", "Guidance", "Enforcement", "News".
+    1. FILTER by PUBLICATION DATE (The "Signal"): 
+       - Keep items where the ARTICLE/UPDATE ITSELF was published within {timeframe_label}.
+       - INCLUDE: Recent articles discussing old regulations, recent reminders, new interpretations of old laws.
+       - EXCLUDE: Old articles that do not fall within the timeline.
+       
+    2. Analyze Impact (High/Medium/Low) based on the relevance to the user's topic.
+    
+    3. CLASSIFY each item into:
+       - "Regulation" (Official laws)
+       - "Standard" (Technical norms)
+       - "Guidance" (Interpretations)
+       - "Enforcement" (Warning letters, recalls)
+       - "News" (Articles, press releases, analysis)
     
     OUTPUT FORMAT (Strict JSON):
     {{
-        "executive_summary": "Summary of the activity specifically during {timeframe_label}...",
+        "executive_summary": "A 2-sentence summary of the activity found in this timeframe.",
         "items": [
             {{ 
                 "title": "...", 
-                "date": "YYYY-MM-DD", 
+                "date": "YYYY-MM-DD (Publication date of the source)", 
                 "source_name": "...", 
                 "url": "...", 
                 "summary": "...", 
                 "tags": ["Tag1"], 
-                "impact": "High/Medium/Low", 
-                "category": "Regulation"
+                "impact": "High/Medium/Low",
+                "category": "Regulation" (or Standard, Guidance, Enforcement, News)
             }}
         ]
     }}
     """
 
-def get_logo_html(size=50):
-    svg = f"""<svg width="{size}" height="{size}" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
+def get_logo_html():
+    svg = """<svg width="60" height="60" viewBox="0 0 100 100" fill="none" xmlns="http://www.w3.org/2000/svg">
         <rect x="10" y="10" width="38" height="38" rx="8" fill="#295A63"/>
         <rect x="52" y="10" width="38" height="38" rx="8" fill="#C8A951"/>
         <rect x="10" y="52" width="38" height="38" rx="8" fill="#1A3C42"/>
         <rect x="52" y="52" width="38" height="38" rx="8" fill="#E6D5A7"/>
     </svg>"""
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
-    return f'<img src="data:image/svg+xml;base64,{b64}" style="display:block; margin:auto;">'
+    return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 15px;">'
 
 # =============================================================================
-# PAGES
+# 7. PAGES UI
 # =============================================================================
-def page_dashboard():
-    st.title("Dashboard")
-    st.markdown(f"<span style='color:#666; font-size:1.1em;'>{config.APP_SLOGAN}</span>", unsafe_allow_html=True)
-    st.markdown("###")
+def page_admin():
+    st.title("⚙️ Admin Console"); st.markdown("---")
+    if not st.session_state["admin_authenticated"]:
+        st.text_input("Admin Password", type="password", key="admin_pass_input", on_change=check_admin_password); return
     
-    # CSS GRID pour alignement parfait
-    col1, col2, col3 = st.columns(3, gap="medium")
-    
-    with col1: 
-        st.markdown(f"""
-        <div class="info-card">
-            <div style="font-size: 2.5rem; margin-bottom: 10px;">🤖</div>
-            <h3 style="margin:0; color:#295A63;">OlivIA</h3>
-            <p style="color:#666; flex-grow:1; margin-top:10px;">{config.AGENTS['olivia']['description']}</p>
-        </div>
-        """, unsafe_allow_html=True)
-        st.write("")
-        if st.button("Start Strategy →", key="btn_oli"):
-            st.session_state["current_page"] = "OlivIA"
-            st.rerun()
+    wb = get_gsheet_workbook()
+    c1, c2 = st.columns([3, 1])
+    c1.success(f"✅ DB: {wb.title}" if wb else "❌ DB Error")
+    if c2.button("🔄 Refresh"): st.cache_data.clear(); st.rerun()
 
-    with col2: 
-        st.markdown(f"""
-        <div class="info-card">
-            <div style="font-size: 2.5rem; margin-bottom: 10px;">🔍</div>
-            <h3 style="margin:0; color:#295A63;">EVA</h3>
-            <p style="color:#666; flex-grow:1; margin-top:10px;">{config.AGENTS['eva']['description']}</p>
-        </div>
-        """, unsafe_allow_html=True)
-        st.write("")
-        if st.button("Start Audit →", key="btn_eva"):
-            st.session_state["current_page"] = "EVA"
-            st.rerun()
-
-    with col3: 
-        st.markdown(f"""
-        <div class="info-card">
-            <div style="font-size: 2.5rem; margin-bottom: 10px;">📡</div>
-            <h3 style="margin:0; color:#295A63;">MIA</h3>
-            <p style="color:#666; flex-grow:1; margin-top:10px;">{config.AGENTS['mia']['description']}</p>
-        </div>
-        """, unsafe_allow_html=True)
-        st.write("")
-        if st.button("Start Watch →", key="btn_mia"):
-            st.session_state["current_page"] = "MIA"
-            st.rerun()
-
-def page_olivia():
-    st.title("🤖 OlivIA Workspace")
-    markets, _ = get_markets()
-    c1, c2 = st.columns([2, 1], gap="large")
-    with c1: desc = st.text_area("Product Definition", height=200, placeholder="Ex: Medical device class IIa...")
-    with c2: 
-        safe_default = [markets[0]] if markets else []
-        ctrys = st.multiselect("Target Markets", markets, default=safe_default)
-        st.write("")
-        gen = st.button("🚀 Generate Report", type="primary")
-    
-    if gen and desc:
-        with st.spinner("Analyzing regulatory landscape..."):
-            try:
-                use_ds = any(x in str(ctrys) for x in ["EU","USA","China"])
-                ctx = ""
-                if use_ds: 
-                    d, _ = cached_run_deep_search(f"Regulations for {desc} in {ctrys}")
-                    if d: ctx = d
-                p = create_olivia_prompt(desc, ctrys)
-                if ctx: p += f"\n\nCONTEXT:\n{ctx}"
-                resp = cached_ai_generation(p, config.OPENAI_MODEL, 0.1)
-                st.session_state["last_olivia_report"] = resp
-                st.session_state["last_olivia_id"] = str(uuid.uuid4())
-                log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)}")
-                st.rerun()
-            except Exception as e: st.error(str(e))
-
-    if st.session_state["last_olivia_report"]:
-        st.markdown("---")
-        st.success("Analysis Generated")
-        st.markdown(st.session_state["last_olivia_report"])
-        try:
-            pdf = generate_pdf_report("Regulatory Report", st.session_state["last_olivia_report"], st.session_state.get("last_olivia_id", "ID"))
-            st.download_button("📥 Download PDF", pdf, "report.pdf", "application/pdf")
-        except: pass
-
-def page_eva():
-    st.title("🔍 EVA Workspace")
-    ctx = st.text_area("Regulatory Context", value=st.session_state.get("last_olivia_report", ""))
-    up = st.file_uploader("Technical Documentation (PDF)", type="pdf")
-    if st.button("Run Audit", type="primary") and up:
-        with st.spinner("Auditing..."):
-            try:
-                txt = extract_text_from_pdf(up.read())
-                resp = cached_ai_generation(create_eva_prompt(ctx, txt), "gpt-4o", 0.1)
-                st.session_state["last_eva_report"] = resp
-                st.session_state["last_eva_id"] = str(uuid.uuid4())
-                log_usage("EVA", st.session_state["last_eva_id"], f"File: {up.name}")
-                st.rerun()
-            except Exception as e: st.error(str(e))
-    
-    if st.session_state.get("last_eva_report"):
-        st.markdown("### Audit Results")
-        st.markdown(st.session_state["last_eva_report"])
-        try:
-            pdf = generate_pdf_report("Audit Report", st.session_state["last_eva_report"], st.session_state.get("last_eva_id", "ID"))
-            st.download_button("📥 Download PDF", pdf, "audit.pdf", "application/pdf")
-        except: pass
+    tm, td = st.tabs(["🌍 Markets", "🕵️‍♂️ Sources"])
+    with tm:
+        mkts, _ = get_markets()
+        with st.form("add_m"):
+            c1, c2 = st.columns([3,1]); new = c1.text_input("Name")
+            if c2.form_submit_button("Add") and new: add_market(new); st.rerun()
+        for i, m in enumerate(mkts):
+            c1, c2, c3 = st.columns([4, 1, 1])
+            c1.info(f"🌍 {m}")
+            if c3.button("🗑️", key=f"dm{i}"): remove_market(i); st.rerun()
+            
+    with td:
+        doms, _ = get_domains()
+        st.info("💡 Deep Search Sources.")
+        with st.form("add_d"):
+            c1, c2 = st.columns([3,1]); new = c1.text_input("Domain")
+            if c2.form_submit_button("Add") and new: add_domain(new); st.rerun()
+        for i, d in enumerate(doms):
+            c1, c2, c3 = st.columns([4, 1, 1])
+            c1.success(f"🌐 {d}")
+            if c3.button("🗑️", key=f"dd{i}"): remove_domain(i); st.rerun()
 
 def page_mia():
-    agent = config.AGENTS["mia"]
-    st.title(f"{agent['icon']} {agent['name']} Watch Tower")
-    st.markdown(f"<span class='sub-text'>{agent['description']}</span>", unsafe_allow_html=True)
-    st.markdown("---")
-
+    st.title("📡 MIA Watch Tower"); st.markdown("---")
     markets, _ = get_markets()
-    col1, col2, col3 = st.columns([2, 2, 1], gap="large")
-    
-    with col1: 
-        topic = st.text_input("🔎 Watch Topic / Product", placeholder="e.g. Cybersecurity for SaMD", key="mia_topic")
-    with col2: 
-        # Sécurité pour éviter liste vide
-        safe_markets = [markets[0]] if markets else []
-        selected_markets = st.multiselect("🌍 Markets", markets, default=safe_markets, key="mia_mkts")
-    with col3:
-        # Map des durées
-        timeframe_map = {
-            "⚡ 30 Days": 30, 
-            "📅 12 Months": 365, 
-            "🏛️ 3 Years": 1095
-        }
-        selected_label = st.selectbox("⏱️ Timeframe", list(timeframe_map.keys()), index=1, key="mia_time")
+    c1, c2, c3 = st.columns([2, 2, 1], gap="large")
+    with c1: topic = st.text_input("🔎 Watch Topic / Product", placeholder="e.g. Cybersecurity for SaMD")
+    with c2: selected_markets = st.multiselect("🌍 Markets", markets, default=[markets[0]] if markets else None)
+    with c3:
+        timeframe_map = {"⚡ Last 30 Days": 30, "📅 Last 12 Months": 365, "🏛️ Last 3 Years": 1095}
+        selected_label = st.selectbox("⏱️ Timeframe", list(timeframe_map.keys()), index=1)
         days_limit = timeframe_map[selected_label]
 
     if st.button("🚀 Launch Monitoring", type="primary"):
         if topic:
             with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
-                # --- CORRECTION ICI : On injecte la période dans le texte ---
-                # Cela force le système de cache à voir une différence et aide Tavily
+                # Semantic Cache Busting : On inclut le label temps dans la query texte
                 clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
-                query = f"New regulations and guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
+                query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
                 
-                # Appel avec le texte modifié ET le paramètre days
                 raw_data, error = cached_run_deep_search(query, days=days_limit)
                 
-                if not raw_data:
-                    st.error(f"Search failed: {error}")
+                if not raw_data: st.error(f"Search failed: {error}")
                 else:
                     prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
                     json_str = cached_ai_generation(prompt, config.OPENAI_MODEL, 0.1, json_mode=True)
-                    
                     if json_str:
                         st.session_state["last_mia_results"] = json.loads(json_str)
                         log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
-                        st.toast("Monitoring Complete!", icon="🎉")
                     else: st.error("Analysis failed.")
 
-    # Affichage des résultats (inchangé)
     results = st.session_state.get("last_mia_results")
     if results:
         st.markdown("### 📋 Monitoring Report")
@@ -531,9 +475,9 @@ def page_mia():
         c_filter1, c_filter2, c_legend = st.columns([2, 2, 1], gap="large")
         with c_filter1:
             all_cat = ["Regulation", "Standard", "Guidance", "Enforcement", "News"]
-            sel_types = st.multiselect("🗂️ Filter by Type", all_cat, default=all_cat, key="mia_type")
+            sel_types = st.multiselect("🗂️ Filter by Type", all_cat, default=all_cat)
         with c_filter2:
-            sel_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"], key="mia_imp")
+            sel_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"])
         with c_legend:
             st.write(""); st.write("")
             st.markdown("<div><span style='color:#e53935'>●</span> High <span style='color:#fb8c00'>●</span> Medium <span style='color:#43a047'>●</span> Low</div>", unsafe_allow_html=True)
@@ -550,81 +494,165 @@ def page_mia():
             cat_map = {"Regulation":"🏛️", "Standard":"📏", "Guidance":"📘", "Enforcement":"📢", "News":"📰"}
             
             with st.container():
-                st.markdown(f"""
-                <div class="info-card" style="min-height:auto; padding:1.5rem; margin-bottom:1rem;">
-                    <div style="display:flex;">
-                        <div style="font-size:1.5rem; margin-right:15px;">{icon}</div>
-                        <div>
-                            <div style="font-weight:bold; font-size:1.1em;">
-                                <a href="{item['url']}" target="_blank" style="text-decoration:none; color:inherit;">
-                                    {cat_map.get(cat,'📄')} {item['title']}
-                                </a>
-                            </div>
-                            <div style="font-size:0.85em; opacity:0.7; margin-bottom:5px;">
-                                📅 {item['date']} | 🏛️ {item['source_name']}
-                            </div>
-                            <div>{item['summary']}</div>
-                        </div>
-                    </div>
-                </div>
-                """, unsafe_allow_html=True)
+                c1, c2 = st.columns([0.1, 0.9])
+                with c1: st.markdown(f"## {icon}")
+                with c2:
+                    st.markdown(f"**[{cat_map.get(cat,'📄')} {cat}]** [{item['title']}]({item['url']})")
+                    st.caption(f"📅 {item['date']} | 🏛️ {item['source_name']}")
+                    st.write(item['summary'])
+                st.markdown("---")
 
-def page_admin():
-    st.title("⚙️ Admin")
-    st.info("Configuration protected.")
+def page_olivia():
+    st.title("🤖 OlivIA Workspace")
+    markets, _ = get_markets()
+    c1, c2 = st.columns([2, 1])
+    with c1: desc = st.text_area("Product Definition", height=200)
+    with c2: 
+        safe_default = [markets[0]] if markets else []
+        ctrys = st.multiselect("Target Markets", markets, default=safe_default)
+        st.write(""); gen = st.button("Generate Report", type="primary")
+    
+    if gen and desc:
+        with st.spinner("Analyzing..."):
+            try:
+                use_ds = any(x in str(ctrys) for x in ["EU","USA","China"])
+                ctx = ""
+                if use_ds: 
+                    d, _ = cached_run_deep_search(f"Regulations for {desc} in {ctrys}")
+                    if d: ctx = d
+                
+                p = create_olivia_prompt(desc, ctrys)
+                if ctx: p += f"\n\nCONTEXT:\n{ctx}"
+                
+                resp = cached_ai_generation(p, config.OPENAI_MODEL, 0.1)
+                st.session_state["last_olivia_report"] = resp
+                
+                new_id = str(uuid.uuid4())
+                st.session_state["last_olivia_id"] = new_id
+                log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)}")
+                st.toast("Analysis Ready!", icon="✅")
+            except Exception as e: st.error(str(e))
+
+    if st.session_state["last_olivia_report"]:
+        st.markdown("---")
+        st.success("✅ Analysis Generated")
+        st.markdown(st.session_state["last_olivia_report"])
+        st.markdown("---")
+        try:
+            pdf = generate_pdf_report("Regulatory Analysis Report", st.session_state["last_olivia_report"], st.session_state.get("last_olivia_id", "ID"))
+            st.download_button("📥 Download PDF", pdf, f"VALHALLAI_Report.pdf", "application/pdf")
+        except:
+            st.download_button("📥 Download Raw Text", st.session_state["last_olivia_report"], "report.md")
+
+def page_eva():
+    st.title("🔍 EVA Workspace")
+    ctx = st.text_area("Context", value=st.session_state.get("last_olivia_report", ""))
+    up = st.file_uploader("PDF", type="pdf")
+    if st.button("Run Audit", type="primary") and up:
+        with st.spinner("Auditing..."):
+            try:
+                txt = extract_text_from_pdf(up.read())
+                resp = cached_ai_generation(create_eva_prompt(ctx, txt), "gpt-4o", 0.1)
+                st.session_state["last_eva_report"] = resp
+                st.session_state["last_eva_id"] = str(uuid.uuid4())
+                log_usage("EVA", st.session_state["last_eva_id"], f"File: {up.name}")
+                st.toast("Audit Complete!", icon="🔍")
+            except Exception as e: st.error(str(e))
+    
+    if st.session_state.get("last_eva_report"):
+        st.markdown("### Audit Results")
+        st.markdown(st.session_state["last_eva_report"])
+        st.markdown("---")
+        try:
+            pdf = generate_pdf_report("Compliance Audit Report", st.session_state["last_eva_report"], st.session_state.get("last_eva_id", "ID"))
+            st.download_button("📥 Download PDF", pdf, f"VALHALLAI_Audit.pdf", "application/pdf")
+        except:
+            st.download_button("📥 Download Text", st.session_state["last_eva_report"], "audit.md")
+
+def page_dashboard():
+    st.title("Dashboard")
+    st.markdown(f"<span class='sub-text'>{config.APP_SLOGAN}</span>", unsafe_allow_html=True)
+    st.markdown("###")
+    c1, c2, c3 = st.columns(3)
+    
+    with c1: 
+        st.markdown(f"""<div class="info-card"><h3>🤖 OlivIA</h3><p class='sub-text'>{config.AGENTS['olivia']['description']}</p></div>""", unsafe_allow_html=True)
+        st.write("")
+        if st.button("Launch OlivIA ->"): 
+            st.session_state["current_page"] = "OlivIA"
+            st.rerun()
+    with c2: 
+        st.markdown(f"""<div class="info-card"><h3>🔍 EVA</h3><p class='sub-text'>{config.AGENTS['eva']['description']}</p></div>""", unsafe_allow_html=True)
+        st.write("")
+        if st.button("Launch EVA ->"): 
+            st.session_state["current_page"] = "EVA"
+            st.rerun()
+    with c3: 
+        st.markdown(f"""<div class="info-card"><h3>{config.AGENTS['mia']['icon']} {config.AGENTS['mia']['name']}</h3><p class='sub-text'>{config.AGENTS['mia']['description']}</p></div>""", unsafe_allow_html=True)
+        st.write("")
+        if st.button("Launch MIA ->"): 
+            st.session_state["current_page"] = "MIA"
+            st.rerun()
 
 def render_sidebar():
     with st.sidebar:
-        if st.button("🏠 Home"): 
-            st.session_state["current_page"]="Dashboard"
-            st.rerun()
-        st.markdown("---")
-        pg = st.radio("Menu", ["Dashboard", "OlivIA", "EVA", "MIA", "Admin"], label_visibility="collapsed")
-        if pg != st.session_state["current_page"]:
-            st.session_state["current_page"] = pg
-            st.rerun()
+        if st.button("🏠 Dashboard", use_container_width=True):
+             st.session_state["current_page"] = "Dashboard"
+             st.rerun()
+
+        st.markdown(get_logo_html(), unsafe_allow_html=True)
+        st.markdown(f"<div class='logo-text'>{config.APP_NAME}</div>", unsafe_allow_html=True)
         st.markdown("---")
         
-        # Toggle Dark Mode Simple
-        is_dark = st.toggle("🌙 Dark Mode", value=st.session_state["dark_mode"])
+        pages = ["Dashboard", "OlivIA", "EVA", "MIA", "Admin"]
+        curr = st.session_state["current_page"]
+        
+        idx = pages.index(curr) if curr in pages else 0
+        selected = st.radio("NAV", pages, index=idx, label_visibility="collapsed")
+        
+        if selected != curr:
+            st.session_state["current_page"] = selected
+            st.rerun()
+
+        st.markdown("---")
+        
+        # Toggle Dark Mode
+        is_dark = st.checkbox("🌙 Night Mode", value=st.session_state["dark_mode"])
         if is_dark != st.session_state["dark_mode"]:
             st.session_state["dark_mode"] = is_dark
             st.rerun()
-            
+
+        st.markdown("---")
         if st.button("Log Out"): logout(); st.rerun()
 
 def render_login():
-    # CSS SPÉCIFIQUE LOGIN (Fond Vert + Centrage)
+    # Centrage parfait
+    _, col, _ = st.columns([1, 2, 1])
+    with col:
+        st.markdown("<br><br><br>", unsafe_allow_html=True)
+        with st.container():
+            st.markdown(
+                f"""
+                <div style="background-color: white; padding: 40px; border-radius: 15px; box-shadow: 0 10px 25px rgba(0,0,0,0.1); text-align: center;">
+                    {get_logo_html(80)}
+                    <h1 style="color: #295A63; font-family: Montserrat; margin-bottom: 0;">{config.APP_NAME}</h1>
+                    <p style="color: #C8A951; font-weight: bold; letter-spacing: 2px; font-size: 0.8em; margin-top: 5px;">{config.APP_TAGLINE}</p>
+                </div>
+                """, 
+                unsafe_allow_html=True
+            )
+            st.write("")
+            st.text_input("🔐 Access Token", type="password", key="password_input", on_change=check_password)
+            
+    # Fond Vert Valhallai Forcé pour le login
     st.markdown("""
     <style>
     .stApp { background-color: #295A63; }
-    .login-container {
-        background-color: white;
-        padding: 50px;
-        border-radius: 15px;
-        box-shadow: 0 20px 50px rgba(0,0,0,0.3);
-        text-align: center;
-        margin-top: 15vh;
-    }
-    .login-container h1 { color: #295A63 !important; }
-    .login-container p { color: #C8A951 !important; letter-spacing: 2px; font-weight: bold; }
     </style>
     """, unsafe_allow_html=True)
-    
-    c1, c2, c3 = st.columns([1, 1.2, 1])
-    with c2:
-        with st.container():
-            st.markdown(f"""
-            <div class="login-container">
-                {get_logo_html(80)}
-                <h1>{config.APP_NAME}</h1>
-                <p>{config.APP_TAGLINE}</p>
-            </div>
-            """, unsafe_allow_html=True)
-            st.text_input("Enter Access Token", type="password", key="password_input", on_change=check_password)
 
 def main():
-    apply_theme()
+    inject_custom_css()
     if st.session_state["authenticated"]:
         render_sidebar()
         p = st.session_state["current_page"]
