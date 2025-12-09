@@ -57,7 +57,7 @@ def init_session_state():
         "last_mia_results": None,
         "editing_market_index": None,
         "editing_domain_index": None,
-        # Variables pour les champs de formulaire MIA (pour permettre le remplissage auto)
+        # Variables persistantes pour le formulaire MIA
         "mia_topic_val": "",
         "mia_markets_val": [],
         "mia_timeframe_index": 1,
@@ -164,9 +164,8 @@ def update_domain(idx, name):
         try: wb.worksheet("Watch_domains").update_cell(idx + 1, 1, name); st.cache_data.clear()
         except: pass
 
-# --- NOUVELLE GESTION DES WATCHLISTS ---
+# --- GESTION DES WATCHLISTS ---
 def get_watchlists():
-    """Récupère les veilles sauvegardées."""
     wb = get_gsheet_workbook()
     watchlists = []
     if wb:
@@ -174,44 +173,37 @@ def get_watchlists():
             try: 
                 sheet = wb.worksheet("Watchlists")
             except: 
-                # Création auto si inexistant
                 sheet = wb.add_worksheet("Watchlists", 100, 5)
                 sheet.append_row(["ID", "Name", "Topic", "Markets", "Timeframe"])
                 return []
             
-            # Lecture des données (à partir de la ligne 2 pour sauter le header)
             rows = sheet.get_all_values()
             if len(rows) > 1:
-                # On transforme les lignes en liste de dictionnaires
                 for row in rows[1:]:
                     if len(row) >= 5:
                         watchlists.append({
                             "id": row[0],
                             "name": row[1],
                             "topic": row[2],
-                            "markets": row[3], # Stocké sous forme "EU, USA"
+                            "markets": row[3], 
                             "timeframe": row[4]
                         })
-        except Exception as e:
-            print(f"Error reading watchlists: {e}")
+        except: pass
     return watchlists
 
 def save_watchlist(name, topic, markets_list, timeframe):
-    """Sauvegarde une nouvelle veille."""
     wb = get_gsheet_workbook()
     if wb:
         try:
             sheet = wb.worksheet("Watchlists")
-            new_id = str(uuid.uuid4())[:8] # ID court
+            new_id = str(uuid.uuid4())[:8]
             markets_str = ", ".join(markets_list)
             sheet.append_row([new_id, name, topic, markets_str, timeframe])
             return True
-        except Exception as e:
-            st.error(f"Save failed: {e}")
+        except: pass
     return False
 
 def delete_watchlist(watchlist_id):
-    """Supprime une veille."""
     wb = get_gsheet_workbook()
     if wb:
         try:
@@ -343,37 +335,40 @@ def get_logo_html(size=50):
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
     return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 10px; display: inline-block;">'
 
-# --- THEME SOBRE ET EFFICACE ---
+# --- THEME CSS ---
 def apply_theme():
     st.markdown("""
     <style>
     @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700&family=Inter:wght@400;600&display=swap');
-
     html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+    h1, h2, h3 { font-family: 'Montserrat', sans-serif !important; color: #295A63 !important; }
     
-    h1, h2, h3 { 
-        font-family: 'Montserrat', sans-serif !important; 
-        color: #295A63 !important; 
-    }
-
-    .info-card { 
-        padding: 2rem; border-radius: 12px; border: 1px solid #E2E8F0; 
-        min-height: 220px; display: flex; flex-direction: column; justify-content: flex-start;
-        background-color: white;
-    }
-    
+    /* Boutons */
     div.stButton > button:first-child { 
         background-color: #295A63 !important; color: white !important; 
         border-radius: 8px; font-weight: 600; width: 100%; border: none;
     }
-    div.stButton > button:first-child:hover {
-        background-color: #C8A951 !important;
-        color: black !important;
+    div.stButton > button:first-child:hover { background-color: #C8A951 !important; color: black !important; }
+    
+    /* Cartes */
+    .info-card { 
+        background-color: white; padding: 2rem; border-radius: 12px; border: 1px solid #E2E8F0; 
+        min-height: 220px; display: flex; flex-direction: column; justify-content: flex-start;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
     }
     
-    .stTextInput > div > div:focus-within {
-        border-color: #295A63 !important;
-        box-shadow: 0 0 0 1px #295A63 !important;
+    /* Inputs */
+    .stTextInput > div > div:focus-within { border-color: #295A63 !important; box-shadow: 0 0 0 1px #295A63 !important; }
+    
+    /* Text Justifié (Classe Custom) */
+    .justified-text {
+        text-align: justify;
+        line-height: 1.6;
+        color: #2c3e50;
+        background-color: #f8f9fa;
+        padding: 15px;
+        border-radius: 8px;
+        border-left: 4px solid #295A63;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -419,105 +414,69 @@ def page_mia():
     watchlists = get_watchlists()
     wl_names = ["-- New Watch --"] + [w["name"] for w in watchlists]
     
-    col_wl, _ = st.columns([2, 2])
+    # Barre de chargement en haut
+    col_wl, col_info = st.columns([2, 3])
     with col_wl:
         selected_wl = st.selectbox("📂 Load Saved Watchlist", wl_names)
     
-    # Chargement automatique des données de la watchlist
+    # Logique de chargement
     if selected_wl != "-- New Watch --":
-        # Trouver la watchlist
         wl_data = next((w for w in watchlists if w["name"] == selected_wl), None)
         if wl_data:
-            # On met à jour les valeurs par défaut
+            # On met à jour les variables de session
             st.session_state["mia_topic_val"] = wl_data["topic"]
-            # Parsing simple des marchés (stockés en string "EU, USA")
-            saved_markets = [m.strip() for m in wl_data["markets"].split(",")]
-            st.session_state["mia_markets_val"] = saved_markets
-            # Parsing Timeframe
+            st.session_state["mia_markets_val"] = [m.strip() for m in wl_data["markets"].split(",")]
             timeframe_map = {"⚡ Last 30 Days": 30, "📅 Last 12 Months": 365, "🏛️ Last 3 Years": 1095}
-            # On essaie de retrouver l'index
             try:
                 st.session_state["mia_timeframe_index"] = list(timeframe_map.keys()).index(wl_data["timeframe"])
-            except:
-                st.session_state["mia_timeframe_index"] = 1
+            except: st.session_state["mia_timeframe_index"] = 1
+            
+            # Feedback immédiat
+            with col_info:
+                st.info(f"✅ Configuration loaded. Click **Launch** below to refresh data.")
 
-    # 2. Formulaire MIA
+    # 2. Formulaire
     markets, _ = get_markets()
     col1, col2, col3 = st.columns([2, 2, 1], gap="large")
     
     with col1: 
-        topic = st.text_input(
-            "🔎 Watch Topic / Product", 
-            value=st.session_state.get("mia_topic_val", ""),
-            placeholder="e.g. Cybersecurity for SaMD"
-        )
+        topic = st.text_input("🔎 Watch Topic / Product", value=st.session_state.get("mia_topic_val", ""), placeholder="e.g. Cybersecurity for SaMD")
     with col2: 
-        # Sécurité pour selected_markets : doit être un sous-ensemble des marchés dispos
         default_mkts = [m for m in st.session_state.get("mia_markets_val", []) if m in markets]
         if not default_mkts and markets: default_mkts = [markets[0]]
-            
-        selected_markets = st.multiselect(
-            "🌍 Markets", 
-            markets, 
-            default=default_mkts
-        )
+        selected_markets = st.multiselect("🌍 Markets", markets, default=default_mkts)
     with col3:
         timeframe_map = {"⚡ Last 30 Days": 30, "📅 Last 12 Months": 365, "🏛️ Last 3 Years": 1095}
-        selected_label = st.selectbox(
-            "⏱️ Timeframe", 
-            list(timeframe_map.keys()), 
-            index=st.session_state.get("mia_timeframe_index", 1)
-        )
+        selected_label = st.selectbox("⏱️ Timeframe", list(timeframe_map.keys()), index=st.session_state.get("mia_timeframe_index", 1))
         days_limit = timeframe_map[selected_label]
 
-    # Boutons d'action
-    c_launch, c_save = st.columns([1, 4])
-    with c_launch:
-        launch = st.button("🚀 Launch", type="primary")
+    # Bouton Launch (Texte dynamique si watchlist chargée)
+    launch_label = f"🚀 Launch {selected_wl}" if selected_wl != "-- New Watch --" else "🚀 Launch Monitoring"
     
-    with c_save:
-        # Zone de sauvegarde de la watchlist
-        with st.popover("💾 Save as Watchlist"):
-            new_wl_name = st.text_input("Name your watchlist", placeholder="e.g. Monthly Cardio Watch")
-            if st.button("Save Configuration"):
-                if new_wl_name and topic and selected_markets:
-                    if save_watchlist(new_wl_name, topic, selected_markets, selected_label):
-                        st.success("Saved! Reload page to see it.")
-                        # On force le rechargement pour mettre à jour la liste
-                        st.cache_data.clear()
-                        st.rerun()
+    if st.button(launch_label, type="primary"):
+        if topic:
+            with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
+                clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
+                query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
+                raw_data, error = cached_run_deep_search(query, days=days_limit)
+                if not raw_data: st.error(f"Search failed: {error}")
                 else:
-                    st.error("Please fill all fields.")
-            
-            # Bouton suppression si watchlist chargée
-            if selected_wl != "-- New Watch --":
-                st.write("---")
-                if st.button(f"🗑️ Delete '{selected_wl}'"):
-                    wl_to_del = next((w for w in watchlists if w["name"] == selected_wl), None)
-                    if wl_to_del and delete_watchlist(wl_to_del["id"]):
-                         st.success("Deleted.")
-                         st.cache_data.clear()
-                         st.rerun()
-
-    if launch and topic:
-        with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
-            clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
-            query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
-            raw_data, error = cached_run_deep_search(query, days=days_limit)
-            if not raw_data: st.error(f"Search failed: {error}")
-            else:
-                prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
-                json_str = cached_ai_generation(prompt, config.OPENAI_MODEL, 0.1, json_mode=True)
-                if json_str:
-                    st.session_state["last_mia_results"] = json.loads(json_str)
-                    log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
-                else: st.error("Analysis failed.")
+                    prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
+                    json_str = cached_ai_generation(prompt, config.OPENAI_MODEL, 0.1, json_mode=True)
+                    if json_str:
+                        st.session_state["last_mia_results"] = json.loads(json_str)
+                        log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
+                    else: st.error("Analysis failed.")
 
     results = st.session_state.get("last_mia_results")
     if results:
         st.markdown("### 📋 Monitoring Report")
-        st.info(f"**Executive Summary:** {results.get('executive_summary', 'No summary.')}")
         
+        # Résumé Justifié (HTML Custom)
+        summary = results.get('executive_summary', 'No summary.')
+        st.markdown(f"""<div class="justified-text"><strong>Executive Summary:</strong> {summary}</div>""", unsafe_allow_html=True)
+        
+        # Filtres
         c_filter1, c_filter2, c_legend = st.columns([2, 2, 1], gap="large")
         with c_filter1:
             all_cat = ["Regulation", "Standard", "Guidance", "Enforcement", "News"]
@@ -526,19 +485,19 @@ def page_mia():
             sel_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"])
         with c_legend:
             st.write(""); st.write("")
-            st.markdown(
-                """
-                <div style="padding-top: 5px; font-size: 0.9em; white-space: nowrap;">
-                    <span style='color: #e53935;'>●</span> High &nbsp;
-                    <span style='color: #fb8c00;'>●</span> Medium &nbsp;
-                    <span style='color: #43a047;'>●</span> Low <br>
-                    <span style='font-size: 0.8em; color: gray;'>📅 Dates refer to online publication</span>
-                </div>
-                """, 
-                unsafe_allow_html=True
-            )
+            st.markdown("<div><span style='color:#e53935'>●</span> High <span style='color:#fb8c00'>●</span> Medium <span style='color:#43a047'>●</span> Low <br><span style='font-size:0.8em; color:gray'>📅 Dates = Publication</span></div>", unsafe_allow_html=True)
+        
+        # Bouton Save (Apparaît ICI après les résultats)
+        with st.expander("💾 Save this Configuration as Watchlist"):
+            new_wl_name = st.text_input("Name your watchlist", placeholder="e.g. My Monthly Watch")
+            if st.button("Save Configuration"):
+                if new_wl_name and topic:
+                    save_watchlist(new_wl_name, topic, selected_markets, selected_label)
+                    st.success("Saved! Reload page to see it in the list.")
+                    st.cache_data.clear()
         
         st.markdown("---")
+        
         items = results.get("items", [])
         filtered = [i for i in items if i.get('impact','Low').capitalize() in sel_impacts and i.get('category','News').capitalize() in sel_types]
         
@@ -562,11 +521,11 @@ def page_olivia():
     st.title("🤖 OlivIA Workspace")
     markets, _ = get_markets()
     c1, c2 = st.columns([2, 1])
-    with c1: desc = st.text_area("Product Definition", height=200)
+    with c1: desc = st.text_area("Product Definition", height=200, key="oli_desc")
     with c2: 
         safe_default = [markets[0]] if markets else []
-        ctrys = st.multiselect("Target Markets", markets, default=safe_default)
-        st.write(""); gen = st.button("Generate Report", type="primary")
+        ctrys = st.multiselect("Target Markets", markets, default=safe_default, key="oli_mkts")
+        st.write(""); gen = st.button("Generate Report", type="primary", key="oli_btn")
     
     if gen and desc:
         with st.spinner("Analyzing..."):
@@ -576,17 +535,13 @@ def page_olivia():
                 if use_ds: 
                     d, _ = cached_run_deep_search(f"Regulations for {desc} in {ctrys}")
                     if d: ctx = d
-                
                 p = create_olivia_prompt(desc, ctrys)
                 if ctx: p += f"\n\nCONTEXT:\n{ctx}"
-                
                 resp = cached_ai_generation(p, config.OPENAI_MODEL, 0.1)
                 st.session_state["last_olivia_report"] = resp
-                
-                new_id = str(uuid.uuid4())
-                st.session_state["last_olivia_id"] = new_id
+                st.session_state["last_olivia_id"] = str(uuid.uuid4())
                 log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)}")
-                st.toast("Analysis Ready!", icon="✅")
+                st.rerun()
             except Exception as e: st.error(str(e))
 
     if st.session_state["last_olivia_report"]:
@@ -602,9 +557,9 @@ def page_olivia():
 
 def page_eva():
     st.title("🔍 EVA Workspace")
-    ctx = st.text_area("Context", value=st.session_state.get("last_olivia_report", ""))
-    up = st.file_uploader("PDF", type="pdf")
-    if st.button("Run Audit", type="primary") and up:
+    ctx = st.text_area("Context", value=st.session_state.get("last_olivia_report", ""), key="eva_ctx")
+    up = st.file_uploader("PDF", type="pdf", key="eva_up")
+    if st.button("Run Audit", type="primary", key="eva_btn") and up:
         with st.spinner("Auditing..."):
             try:
                 txt = extract_text_from_pdf(up.read())
@@ -612,7 +567,7 @@ def page_eva():
                 st.session_state["last_eva_report"] = resp
                 st.session_state["last_eva_id"] = str(uuid.uuid4())
                 log_usage("EVA", st.session_state["last_eva_id"], f"File: {up.name}")
-                st.toast("Audit Complete!", icon="🔍")
+                st.rerun()
             except Exception as e: st.error(str(e))
     
     if st.session_state.get("last_eva_report"):
