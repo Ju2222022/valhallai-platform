@@ -61,6 +61,7 @@ def init_session_state():
         "mia_topic_val": "",
         "mia_markets_val": [],
         "mia_timeframe_index": 1,
+        "current_watchlist": None, # Pour éviter le re-toast en boucle
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -414,16 +415,12 @@ def page_mia():
     watchlists = get_watchlists()
     wl_names = ["-- New Watch --"] + [w["name"] for w in watchlists]
     
-    # Barre de chargement en haut
-    col_wl, col_info = st.columns([2, 3])
-    with col_wl:
-        selected_wl = st.selectbox("📂 Load Saved Watchlist", wl_names)
+    selected_wl = st.selectbox("📂 Load Saved Watchlist", wl_names)
     
-    # Logique de chargement
-    if selected_wl != "-- New Watch --":
+    # Chargement
+    if selected_wl != "-- New Watch --" and st.session_state.get("current_watchlist") != selected_wl:
         wl_data = next((w for w in watchlists if w["name"] == selected_wl), None)
         if wl_data:
-            # On met à jour les variables de session
             st.session_state["mia_topic_val"] = wl_data["topic"]
             st.session_state["mia_markets_val"] = [m.strip() for m in wl_data["markets"].split(",")]
             timeframe_map = {"⚡ Last 30 Days": 30, "📅 Last 12 Months": 365, "🏛️ Last 3 Years": 1095}
@@ -431,51 +428,79 @@ def page_mia():
                 st.session_state["mia_timeframe_index"] = list(timeframe_map.keys()).index(wl_data["timeframe"])
             except: st.session_state["mia_timeframe_index"] = 1
             
-            # Feedback immédiat
-            with col_info:
-                st.info(f"✅ Configuration loaded. Click **Launch** below to refresh data.")
+            st.session_state["current_watchlist"] = selected_wl # Marqueur pour ne pas re-toaster
+            st.toast(f"✅ Watch loaded: {selected_wl}")
 
     # 2. Formulaire
     markets, _ = get_markets()
     col1, col2, col3 = st.columns([2, 2, 1], gap="large")
     
     with col1: 
-        topic = st.text_input("🔎 Watch Topic / Product", value=st.session_state.get("mia_topic_val", ""), placeholder="e.g. Cybersecurity for SaMD")
+        topic = st.text_input(
+            "🔎 Watch Topic / Product", 
+            value=st.session_state.get("mia_topic_val", ""),
+            placeholder="e.g. Cybersecurity for SaMD"
+        )
     with col2: 
         default_mkts = [m for m in st.session_state.get("mia_markets_val", []) if m in markets]
         if not default_mkts and markets: default_mkts = [markets[0]]
-        selected_markets = st.multiselect("🌍 Markets", markets, default=default_mkts)
+            
+        selected_markets = st.multiselect(
+            "🌍 Markets", 
+            markets, 
+            default=default_mkts
+        )
     with col3:
         timeframe_map = {"⚡ Last 30 Days": 30, "📅 Last 12 Months": 365, "🏛️ Last 3 Years": 1095}
-        selected_label = st.selectbox("⏱️ Timeframe", list(timeframe_map.keys()), index=st.session_state.get("mia_timeframe_index", 1))
+        selected_label = st.selectbox(
+            "⏱️ Timeframe", 
+            list(timeframe_map.keys()), 
+            index=st.session_state.get("mia_timeframe_index", 1)
+        )
         days_limit = timeframe_map[selected_label]
 
-    # Bouton Launch (Texte dynamique si watchlist chargée)
+    # Bouton Launch dynamique
     launch_label = f"🚀 Launch {selected_wl}" if selected_wl != "-- New Watch --" else "🚀 Launch Monitoring"
     
-    if st.button(launch_label, type="primary"):
+    c_launch, c_save = st.columns([1, 4])
+    with c_launch:
+        launch = st.button(launch_label, type="primary")
+    
+    with c_save:
+        # Save Button (Visible uniquement si topic rempli)
         if topic:
-            with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
-                clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
-                query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
-                raw_data, error = cached_run_deep_search(query, days=days_limit)
-                if not raw_data: st.error(f"Search failed: {error}")
-                else:
-                    prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
-                    json_str = cached_ai_generation(prompt, config.OPENAI_MODEL, 0.1, json_mode=True)
-                    if json_str:
-                        st.session_state["last_mia_results"] = json.loads(json_str)
-                        log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
-                    else: st.error("Analysis failed.")
+            with st.popover("💾 Save as Watchlist"):
+                new_wl_name = st.text_input("Name", placeholder="e.g. Monthly Cardio Watch")
+                if st.button("Save"):
+                    if new_wl_name:
+                        save_watchlist(new_wl_name, topic, selected_markets, selected_label)
+                        st.success("Saved!")
+                        st.cache_data.clear()
+                        st.rerun()
+
+    if launch and topic:
+        with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
+            clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
+            query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
+            raw_data, error = cached_run_deep_search(query, days=days_limit)
+            if not raw_data: st.error(f"Search failed: {error}")
+            else:
+                prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
+                json_str = cached_ai_generation(prompt, config.OPENAI_MODEL, 0.1, json_mode=True)
+                if json_str:
+                    st.session_state["last_mia_results"] = json.loads(json_str)
+                    log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
+                else: st.error("Analysis failed.")
 
     results = st.session_state.get("last_mia_results")
     if results:
         st.markdown("### 📋 Monitoring Report")
         
-        # Résumé Justifié (HTML Custom)
+        # Résumé Justifié
         summary = results.get('executive_summary', 'No summary.')
         st.markdown(f"""<div class="justified-text"><strong>Executive Summary:</strong> {summary}</div>""", unsafe_allow_html=True)
-        
+        st.markdown("<br>", unsafe_allow_html=True) # Espacement
+
         # Filtres
         c_filter1, c_filter2, c_legend = st.columns([2, 2, 1], gap="large")
         with c_filter1:
@@ -487,15 +512,6 @@ def page_mia():
             st.write(""); st.write("")
             st.markdown("<div><span style='color:#e53935'>●</span> High <span style='color:#fb8c00'>●</span> Medium <span style='color:#43a047'>●</span> Low <br><span style='font-size:0.8em; color:gray'>📅 Dates = Publication</span></div>", unsafe_allow_html=True)
         
-        # Bouton Save (Apparaît ICI après les résultats)
-        with st.expander("💾 Save this Configuration as Watchlist"):
-            new_wl_name = st.text_input("Name your watchlist", placeholder="e.g. My Monthly Watch")
-            if st.button("Save Configuration"):
-                if new_wl_name and topic:
-                    save_watchlist(new_wl_name, topic, selected_markets, selected_label)
-                    st.success("Saved! Reload page to see it in the list.")
-                    st.cache_data.clear()
-        
         st.markdown("---")
         
         items = results.get("items", [])
@@ -504,8 +520,12 @@ def page_mia():
         if not filtered: st.warning("No updates found matching filters.")
         for item in filtered:
             impact = item.get('impact', 'Low').lower()
-            cat = item.get('category', 'News')
-            icon = "🔴" if impact=='high' else "🟡" if impact=='medium' else "🟢"
+            category = item.get('category', 'News')
+            
+            if impact == 'high': icon = "🔴"
+            elif impact == 'medium': icon = "🟡"
+            else: icon = "🟢"
+            
             cat_map = {"Regulation":"🏛️", "Standard":"📏", "Guidance":"📘", "Enforcement":"📢", "News":"📰"}
             
             with st.container():
@@ -535,13 +555,17 @@ def page_olivia():
                 if use_ds: 
                     d, _ = cached_run_deep_search(f"Regulations for {desc} in {ctrys}")
                     if d: ctx = d
+                
                 p = create_olivia_prompt(desc, ctrys)
                 if ctx: p += f"\n\nCONTEXT:\n{ctx}"
+                
                 resp = cached_ai_generation(p, config.OPENAI_MODEL, 0.1)
                 st.session_state["last_olivia_report"] = resp
-                st.session_state["last_olivia_id"] = str(uuid.uuid4())
+                
+                new_id = str(uuid.uuid4())
+                st.session_state["last_olivia_id"] = new_id
                 log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)}")
-                st.rerun()
+                st.toast("Analysis Ready!", icon="✅")
             except Exception as e: st.error(str(e))
 
     if st.session_state["last_olivia_report"]:
@@ -567,7 +591,7 @@ def page_eva():
                 st.session_state["last_eva_report"] = resp
                 st.session_state["last_eva_id"] = str(uuid.uuid4())
                 log_usage("EVA", st.session_state["last_eva_id"], f"File: {up.name}")
-                st.rerun()
+                st.toast("Audit Complete!", icon="🔍")
             except Exception as e: st.error(str(e))
     
     if st.session_state.get("last_eva_report"):
