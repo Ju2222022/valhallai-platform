@@ -57,7 +57,6 @@ def init_session_state():
         "last_eva_id": None,
         "last_mia_results": None,
         "mia_impact_results": {}, 
-        # NOUVEAU : Variable pour garder le focus sur l'expander ouvert
         "active_analysis_id": None,
         "editing_market_index": None,
         "editing_domain_index": None,
@@ -268,7 +267,9 @@ def display_timeline(items):
                 "Description": item["title"],
                 "Source": item.get("source_name", "Web")
             })
+
     if not timeline_data: return
+
     df = pd.DataFrame(timeline_data)
     df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
     df = df.dropna(subset=["Date"])
@@ -307,6 +308,7 @@ def display_timeline(items):
         paper_bgcolor='white',
         showlegend=False
     )
+    
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
     
     c1, c2, c3, c4 = st.columns(4)
@@ -361,7 +363,7 @@ def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     OUTPUT JSON: {{ "executive_summary": "...", "items": [ {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["..."], "impact": "High/Medium/Low", "category": "Regulation", "timeline": [] }} ] }}
     """
 
-# --- NOUVEAU PROMPT POUR IMPACT ANALYSIS (NEUTRE) ---
+# --- PROMPT IMPACT (CORRIGÉ: PAS D'ESTIMATION, DISCLAIMER AJOUTÉ) ---
 def create_impact_analysis_prompt(prod_desc, item_content):
     return f"""
     ROLE: Senior Regulatory Affairs Expert.
@@ -371,7 +373,7 @@ def create_impact_analysis_prompt(prod_desc, item_content):
     REGULATORY UPDATE: "{item_content}"
     
     MISSION:
-    Provide a factual Gap Analysis / Impact Assessment without forcing a Yes/No conclusion.
+    Provide a factual Gap Analysis / Impact Assessment.
     
     OUTPUT FORMAT (Markdown):
     **Relevance Analysis:**
@@ -385,7 +387,8 @@ def create_impact_analysis_prompt(prod_desc, item_content):
     **Recommended Next Steps:**
     List 2-3 concrete actions for the Regulatory Affairs Manager to verify.
     
-    **Estimated Effort:** [Low/Medium/High] (If applicable)
+    ---
+    *⚠️ Note: This AI analysis is for informational purposes and requires verification by a qualified RA professional.*
     """
 
 def get_logo_html(size=50):
@@ -398,7 +401,6 @@ def get_logo_html(size=50):
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
     return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 10px; display: inline-block;">'
 
-# --- THEME CSS ---
 def apply_theme():
     st.markdown("""
     <style>
@@ -552,7 +554,7 @@ def page_mia():
     if results:
         st.markdown("### 📋 Monitoring Report")
         
-        # TIMELINE VISUALISATION (DANS EXPANDER FERMÉ)
+        # TIMELINE VISUALISATION (DANS EXPANDER FERMÉ PAR DÉFAUT)
         with st.expander("📅 View Strategic Timeline", expanded=False):
             if results.get("items"):
                 display_timeline(results["items"])
@@ -583,10 +585,7 @@ def page_mia():
             icon = "🔴" if impact == 'high' else "🟡" if impact == 'medium' else "🟢"
             cat_map = {"Regulation":"🏛️", "Standard":"📏", "Guidance":"📘", "Enforcement":"📢", "News":"📰"}
             
-            # Création de l'ID unique pour le bouton
             safe_id = hashlib.md5(item['title'].encode()).hexdigest()
-            
-            # Vérifier si cet item est "actif" (expander ouvert)
             is_active = (st.session_state.get("active_analysis_id") == safe_id)
             
             with st.container():
@@ -609,15 +608,15 @@ def page_mia():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # --- SECTION ASSESS IMPACT AVEC GESTION D'ÉTAT ---
+                # --- IMPACT ANALYSIS : CORRECTION CONTEXTE VIDE ---
                 with st.expander(f"⚡ Analyze Impact (Beta)", expanded=is_active):
-                    default_context = st.session_state.get("mia_topic_val", topic) or "General"
+                    # On utilise 'topic' si la session est vide (sécurité)
+                    default_context = st.session_state.get("mia_topic_val", topic) or ""
+                    
                     prod_ctx = st.text_input("Product Context:", value=default_context, key=f"ctx_{safe_id}")
                     
                     if st.button("Generate Analysis", key=f"btn_{safe_id}"):
-                        # 1. On mémorise quel item est actif pour la réouverture auto
                         st.session_state["active_analysis_id"] = safe_id
-                        
                         with st.spinner("Evaluating..."):
                             ia_prompt = create_impact_analysis_prompt(prod_ctx, f"{item['title']}: {item['summary']}")
                             ia_res = cached_ai_generation(ia_prompt, config.OPENAI_MODEL, 0.1)
