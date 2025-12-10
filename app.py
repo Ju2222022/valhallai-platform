@@ -57,6 +57,8 @@ def init_session_state():
         "last_eva_id": None,
         "last_mia_results": None,
         "mia_impact_results": {}, 
+        # NOUVEAU : Variable pour garder le focus sur l'expander ouvert
+        "active_analysis_id": None,
         "editing_market_index": None,
         "editing_domain_index": None,
         "mia_topic_val": "",
@@ -248,11 +250,8 @@ def extract_text_from_pdf(b):
 # 5. VISUALISATION
 # =============================================================================
 def display_timeline(items):
-    """Génère la frise chronologique avec zoom intelligent."""
     if not items: return
-    
     timeline_data = []
-    
     for item in items:
         if "timeline" in item and item["timeline"]:
             for event in item["timeline"]:
@@ -269,13 +268,10 @@ def display_timeline(items):
                 "Description": item["title"],
                 "Source": item.get("source_name", "Web")
             })
-
     if not timeline_data: return
-
     df = pd.DataFrame(timeline_data)
     df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
     df = df.dropna(subset=["Date"])
-    
     if df.empty: return
 
     now = datetime.now()
@@ -294,7 +290,6 @@ def display_timeline(items):
         color_discrete_map="identity", height=130
     )
     
-    # Echelle 12 mois passé / 24 mois futur
     start_view = now - timedelta(days=365)
     end_view = now + timedelta(days=730)
     
@@ -305,16 +300,13 @@ def display_timeline(items):
         zeroline=False
     )
     fig.update_yaxes(visible=False, showticklabels=False)
-    
     fig.add_vline(x=now.timestamp() * 1000, line_width=2, line_dash="dot", line_color="#295A63", annotation_text="Today")
-    
     fig.update_layout(
         margin=dict(l=10, r=10, t=10, b=10),
         plot_bgcolor='white',
         paper_bgcolor='white',
         showlegend=False
     )
-    
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
     
     c1, c2, c3, c4 = st.columns(4)
@@ -369,6 +361,7 @@ def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     OUTPUT JSON: {{ "executive_summary": "...", "items": [ {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["..."], "impact": "High/Medium/Low", "category": "Regulation", "timeline": [] }} ] }}
     """
 
+# --- NOUVEAU PROMPT POUR IMPACT ANALYSIS (NEUTRE) ---
 def create_impact_analysis_prompt(prod_desc, item_content):
     return f"""
     ROLE: Senior Regulatory Affairs Expert.
@@ -378,18 +371,21 @@ def create_impact_analysis_prompt(prod_desc, item_content):
     REGULATORY UPDATE: "{item_content}"
     
     MISSION:
-    Determine if this specific update affects the product.
+    Provide a factual Gap Analysis / Impact Assessment without forcing a Yes/No conclusion.
     
     OUTPUT FORMAT (Markdown):
-    **Applicability:** [YES/NO/MAYBE] - Why?
+    **Relevance Analysis:**
+    Explain clearly the connection (or lack thereof) between the regulation and the product specifics. Highlight what matches and what differs.
     
-    **Gap Analysis:**
-    - [ ] Design/Hardware changes?
-    - [ ] Labeling/IFU changes?
-    - [ ] Testing standards update?
+    **Potential Technical Impacts:**
+    - Design/Hardware: ...
+    - Labeling/IFU: ...
+    - Testing/Standards: ...
     
-    **Recommendation:**
-    One clear sentence on what to do next.
+    **Recommended Next Steps:**
+    List 2-3 concrete actions for the Regulatory Affairs Manager to verify.
+    
+    **Estimated Effort:** [Low/Medium/High] (If applicable)
     """
 
 def get_logo_html(size=50):
@@ -556,16 +552,15 @@ def page_mia():
     if results:
         st.markdown("### 📋 Monitoring Report")
         
-        summary = results.get('executive_summary', 'No summary.')
-        st.markdown(f"""<div class="justified-text"><strong>Executive Summary:</strong> {summary}</div>""", unsafe_allow_html=True)
-        st.markdown("<br>", unsafe_allow_html=True)
-        
-        # --- TIMELINE (DÉPLIANT FERMÉ PAR DÉFAUT) ---
-        if results.get("items"):
-            with st.expander("📅 View Strategic Timeline", expanded=False):
+        # TIMELINE VISUALISATION (DANS EXPANDER FERMÉ)
+        with st.expander("📅 View Strategic Timeline", expanded=False):
+            if results.get("items"):
                 display_timeline(results["items"])
         
         st.markdown("---")
+        summary = results.get('executive_summary', 'No summary.')
+        st.markdown(f"""<div class="justified-text"><strong>Executive Summary:</strong> {summary}</div>""", unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
 
         c_filter1, c_filter2, c_legend = st.columns([2, 2, 1], gap="large")
         with c_filter1:
@@ -575,7 +570,7 @@ def page_mia():
             sel_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"])
         with c_legend:
             st.write(""); st.write("")
-            st.markdown("<div><span style='color:#e53935'>●</span> High <span style='color:#fb8c00'>●</span> Medium <span style='color:#43a047'>●</span> Low <br><span style='font-size:0.8em; color:gray'>📅 Dates = Publication</span></div>", unsafe_allow_html=True)
+            st.markdown("<div><span style='color:#e53935'>●</span> High <span style='color:#fb8c00'>●</span> Medium <span style='color:#43a047'>●</span> Low <br><span style='font-size:0.8em; color:gray'>📅 Dates refer to publication date</span></div>", unsafe_allow_html=True)
         
         st.markdown("---")
         items = results.get("items", [])
@@ -588,8 +583,11 @@ def page_mia():
             icon = "🔴" if impact == 'high' else "🟡" if impact == 'medium' else "🟢"
             cat_map = {"Regulation":"🏛️", "Standard":"📏", "Guidance":"📘", "Enforcement":"📢", "News":"📰"}
             
-            # ID unique pour la persistance
+            # Création de l'ID unique pour le bouton
             safe_id = hashlib.md5(item['title'].encode()).hexdigest()
+            
+            # Vérifier si cet item est "actif" (expander ouvert)
+            is_active = (st.session_state.get("active_analysis_id") == safe_id)
             
             with st.container():
                 st.markdown(f"""
@@ -611,22 +609,21 @@ def page_mia():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # --- IMPACT ANALYSIS (FIX & SECURE) ---
-                with st.expander(f"⚡ Analyze Impact (Beta)"):
-                    # On sécurise la variable topic
-                    current_topic = st.session_state.get("mia_topic_val") or topic or "General Regulatory Query"
-                    
-                    prod_ctx = st.text_input("Product Context:", value=current_topic, key=f"ctx_{safe_id}")
+                # --- SECTION ASSESS IMPACT AVEC GESTION D'ÉTAT ---
+                with st.expander(f"⚡ Analyze Impact (Beta)", expanded=is_active):
+                    default_context = st.session_state.get("mia_topic_val", topic) or "General"
+                    prod_ctx = st.text_input("Product Context:", value=default_context, key=f"ctx_{safe_id}")
                     
                     if st.button("Generate Analysis", key=f"btn_{safe_id}"):
-                        with st.spinner("Evaluating impact..."):
+                        # 1. On mémorise quel item est actif pour la réouverture auto
+                        st.session_state["active_analysis_id"] = safe_id
+                        
+                        with st.spinner("Evaluating..."):
                             ia_prompt = create_impact_analysis_prompt(prod_ctx, f"{item['title']}: {item['summary']}")
                             ia_res = cached_ai_generation(ia_prompt, config.OPENAI_MODEL, 0.1)
-                            # On sauvegarde dans la session pour survivre au rerun
                             st.session_state["mia_impact_results"][safe_id] = ia_res
                             st.rerun()
 
-                    # Affichage persistant
                     if safe_id in st.session_state["mia_impact_results"]:
                         st.markdown("---")
                         st.markdown(st.session_state["mia_impact_results"][safe_id])
