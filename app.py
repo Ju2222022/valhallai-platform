@@ -43,11 +43,10 @@ DEFAULT_DOMAINS = [
     "reuters.com", "raps.org", "medtechdive.com", "complianceandrisks.com"
 ]
 
-# Valeurs par défaut de la configuration dynamique
 DEFAULT_APP_CONFIG = {
-    "enable_impact_analysis": "TRUE", # Affiche le module Assess Impact
-    "cache_ttl_hours": "1",           # Durée du cache en heures
-    "max_search_results": "5"         # Nombre de liens Tavily
+    "enable_impact_analysis": "TRUE",
+    "cache_ttl_hours": "1",
+    "max_search_results": "5"
 }
 
 # =============================================================================
@@ -71,7 +70,6 @@ def init_session_state():
         "mia_markets_val": [],
         "mia_timeframe_index": 1,
         "current_watchlist": None,
-        # Stockage local de la config pour éviter de lire le GSheet à chaque clic
         "app_config": DEFAULT_APP_CONFIG.copy()
     }
     for key, value in defaults.items():
@@ -116,49 +114,37 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
         log_sheet.append_row([now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), report_id, report_type, details, extra_metrics])
     except: pass
 
-# --- CONFIGURATION DYNAMIQUE (MIA_App_Config) ---
 def get_app_config():
-    """Lit la configuration depuis le GSheet."""
     wb = get_gsheet_workbook()
     config_dict = DEFAULT_APP_CONFIG.copy()
-    
     if wb:
         try:
-            try: 
-                sheet = wb.worksheet("MIA_App_Config")
+            try: sheet = wb.worksheet("MIA_App_Config")
             except:
-                # Création auto si inexistant
                 sheet = wb.add_worksheet("MIA_App_Config", 20, 2)
                 sheet.append_row(["Setting_Key", "Value"])
-                for k, v in DEFAULT_APP_CONFIG.items():
-                    sheet.append_row([k, v])
+                for k, v in DEFAULT_APP_CONFIG.items(): sheet.append_row([k, v])
                 return config_dict
-
             rows = sheet.get_all_values()
             if len(rows) > 1:
                 for row in rows[1:]:
-                    if len(row) >= 2:
-                        config_dict[row[0]] = row[1]
+                    if len(row) >= 2: config_dict[row[0]] = row[1]
         except: pass
-    
     return config_dict
 
 def update_app_config(key, value):
-    """Met à jour une clé de configuration."""
     wb = get_gsheet_workbook()
     if wb:
         try:
             sheet = wb.worksheet("MIA_App_Config")
             cell = sheet.find(key)
             if cell:
-                # Met à jour la valeur (colonne B = col 2)
                 sheet.update_cell(cell.row, 2, str(value))
-                st.cache_data.clear() # Force le rechargement du cache
+                st.cache_data.clear()
                 return True
         except: pass
     return False
 
-# --- HELPERS BDD ---
 def get_markets():
     wb = get_gsheet_workbook()
     if wb:
@@ -266,14 +252,22 @@ def get_openai_client():
     return OpenAI(api_key=k) if k else None
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def cached_run_deep_search(query, days=None):
+def cached_run_deep_search(query, days=None, max_results=5):
     try:
         k = st.secrets.get("TAVILY_API_KEY")
         if not k: return None, "Key Missing"
         tavily = TavilyClient(api_key=k)
         doms, _ = get_domains()
-        params = {"query": query, "search_depth": "advanced", "max_results": 5 if days else 3, "include_domains": doms}
+        
+        # Utilisation du paramètre max_results
+        params = {
+            "query": query, 
+            "search_depth": "advanced", 
+            "max_results": max_results, 
+            "include_domains": doms
+        }
         if days: params["days"] = days
+        
         response = tavily.search(**params)
         txt = "### WEB RESULTS:\n"
         for r in response['results']:
@@ -321,7 +315,6 @@ def display_timeline(items):
             })
 
     if not timeline_data: return
-
     df = pd.DataFrame(timeline_data)
     df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
     df = df.dropna(subset=["Date"])
@@ -472,10 +465,9 @@ def page_admin():
     c1.success(f"✅ DB: {wb.title}" if wb else "❌ DB Error")
     if c2.button("🔄 Refresh"): st.cache_data.clear(); st.rerun()
 
-    # TABS ADMIN
     tm, td, tc = st.tabs(["🌍 Markets", "🕵️‍♂️ Sources", "🎛️ MIA Settings"])
     
-    # 1. MARKETS
+    # TAB 1: MARKETS
     with tm:
         mkts, _ = get_markets()
         with st.form("add_m"):
@@ -486,7 +478,7 @@ def page_admin():
             c1.info(f"🌍 {m}")
             if c3.button("🗑️", key=f"dm{i}"): remove_market(i); st.rerun()
     
-    # 2. SOURCES
+    # TAB 2: SOURCES
     with td:
         doms, _ = get_domains()
         st.info("💡 Deep Search Sources.")
@@ -498,36 +490,56 @@ def page_admin():
             c1.success(f"🌐 {d}")
             if c3.button("🗑️", key=f"dd{i}"): remove_domain(i); st.rerun()
 
-    # 3. MIA SETTINGS (FEATURE FLIPPING)
+    # TAB 3: SETTINGS
     with tc:
-        st.markdown("#### Feature Management")
-        app_config = st.session_state["app_config"]
-        
+        st.markdown("#### Feature Flags")
+        # Chargement config (avec création auto si vide)
+        app_config = st.session_state.get("app_config")
+        if not app_config:
+            st.session_state["app_config"] = get_app_config()
+            app_config = st.session_state["app_config"]
+            
         # Toggle Assess Impact
-        current_impact_val = app_config.get("enable_impact_analysis", "TRUE") == "TRUE"
-        new_impact_val = st.toggle("⚡ Enable 'Assess Impact' Feature", value=current_impact_val)
+        curr_impact = app_config.get("enable_impact_analysis", "TRUE") == "TRUE"
+        new_impact = st.toggle("⚡ Enable 'Assess Impact' Feature", value=curr_impact)
         
-        if new_impact_val != current_impact_val:
-            val_str = "TRUE" if new_impact_val else "FALSE"
-            update_app_config("enable_impact_analysis", val_str)
-            st.session_state["app_config"] = get_app_config() # Reload local
+        if new_impact != curr_impact:
+            val = "TRUE" if new_impact else "FALSE"
+            update_app_config("enable_impact_analysis", val)
+            st.session_state["app_config"]["enable_impact_analysis"] = val
             st.success("Updated!")
             st.rerun()
-            
+
+        st.markdown("---")
         st.markdown("#### Performance")
-        current_cache = app_config.get("cache_ttl_hours", "1")
-        new_cache = st.text_input("Cache Duration (Hours)", value=current_cache)
-        if st.button("Update Cache"):
-            update_app_config("cache_ttl_hours", new_cache)
-            st.success("Updated!")
+        
+        # Input Max Results
+        curr_max = app_config.get("max_search_results", "5")
+        new_max = st.text_input("Max Tavily Results (1-10)", value=curr_max)
+        if st.button("Update Max Results"):
+            if new_max.isdigit() and 1 <= int(new_max) <= 10:
+                update_app_config("max_search_results", new_max)
+                st.session_state["app_config"]["max_search_results"] = new_max
+                st.success("✅ Updated! Effective immediately.")
+            else:
+                st.error("Enter a number between 1 and 10.")
+        
+        # Input Cache TTL
+        curr_ttl = app_config.get("cache_ttl_hours", "1")
+        new_ttl = st.text_input("Cache Duration (Hours)", value=curr_ttl)
+        if st.button("Update Cache Duration"):
+             update_app_config("cache_ttl_hours", new_ttl)
+             st.success("Saved.")
+             st.warning("⚠️ Restart Required: This change will apply after the next app reboot.")
 
 def page_mia():
     st.title("📡 MIA Watch Tower"); st.markdown("---")
     
-    # Chargement de la config
-    app_config = st.session_state["app_config"]
-    show_impact_analysis = app_config.get("enable_impact_analysis", "TRUE") == "TRUE"
-
+    # Chargement config pour Feature Flipping
+    app_config = st.session_state.get("app_config", get_app_config())
+    show_impact = app_config.get("enable_impact_analysis", "TRUE") == "TRUE"
+    max_res = int(app_config.get("max_search_results", 5))
+    
     watchlists = get_watchlists()
     wl_names = ["-- New Watch --"] + [w["name"] for w in watchlists]
     
@@ -583,7 +595,8 @@ def page_mia():
         with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
             clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
             query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
-            raw_data, error = cached_run_deep_search(query, days=days_limit)
+            # Utilisation du paramètre dynamique max_results
+            raw_data, error = cached_run_deep_search(query, days=days_limit, max_results=max_res)
             if not raw_data: st.error(f"Search failed: {error}")
             else:
                 prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
@@ -633,6 +646,7 @@ def page_mia():
             cat = item.get('category', 'News')
             icon = "🔴" if impact == 'high' else "🟡" if impact == 'medium' else "🟢"
             cat_map = {"Regulation":"🏛️", "Standard":"📏", "Guidance":"📘", "Enforcement":"📢", "News":"📰"}
+            
             safe_id = hashlib.md5(item['title'].encode()).hexdigest()
             is_active = (st.session_state.get("active_analysis_id") == safe_id)
             
@@ -656,8 +670,8 @@ def page_mia():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # --- FEATURE FLIPPING : ASSESS IMPACT ---
-                if show_impact_analysis:
+                # --- IMPACT ANALYSIS DYNAMIQUE (Configurable) ---
+                if show_impact:
                     with st.expander(f"⚡ Analyze Impact (Beta)", expanded=is_active):
                         default_context = st.session_state.get("mia_topic_val", topic) or ""
                         prod_ctx = st.text_input("Product Context:", value=default_context, key=f"ctx_{safe_id}")
