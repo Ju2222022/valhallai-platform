@@ -115,37 +115,21 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
     except: pass
 
 def get_app_config():
-    """Lit la configuration et FORCE l'écriture si vide."""
     wb = get_gsheet_workbook()
     config_dict = DEFAULT_APP_CONFIG.copy()
     if wb:
         try:
-            # 1. Récupération ou création de l'onglet
             try: sheet = wb.worksheet("MIA_App_Config")
-            except: sheet = wb.add_worksheet("MIA_App_Config", 20, 2)
-
-            # 2. Lecture des données existantes
+            except:
+                sheet = wb.add_worksheet("MIA_App_Config", 20, 2)
+                sheet.append_row(["Setting_Key", "Value"])
+                for k, v in DEFAULT_APP_CONFIG.items(): sheet.append_row([k, v])
+                return config_dict
             rows = sheet.get_all_values()
-
-            # 3. SYNC FORCEE : Si l'onglet est vide (ou juste header), on écrit les défauts
-            if len(rows) <= 1:
-                # On prépare les données à écrire
-                data_to_write = [["Setting_Key", "Value"]]
-                for k, v in DEFAULT_APP_CONFIG.items():
-                    data_to_write.append([k, v])
-                # Écriture en bloc
-                sheet.clear()
-                sheet.update("A1", data_to_write)
-                return config_dict # On retourne les défauts
-            
-            # 4. Parsing des données si elles existent
-            for row in rows[1:]:
-                if len(row) >= 2:
-                    config_dict[row[0]] = row[1]
-                    
-        except Exception as e:
-            print(f"Config Sync Error: {e}")
-            pass
+            if len(rows) > 1:
+                for row in rows[1:]:
+                    if len(row) >= 2: config_dict[row[0]] = row[1]
+        except: pass
     return config_dict
 
 def update_app_config(key, value):
@@ -456,7 +440,6 @@ def apply_theme():
         text-align: justify; line-height: 1.6; color: #2c3e50;
         background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #295A63;
     }
-    
     .mia-link a { color: #295A63 !important; text-decoration: none; font-weight: 700; font-size: 1.1em; border-bottom: 2px solid #C8A951; }
     .mia-link a:hover { color: #C8A951 !important; background-color: #f0f0f0; }
     </style>
@@ -481,20 +464,28 @@ def page_admin():
     with tm:
         mkts, _ = get_markets()
         with st.form("add_m"):
-            c1, c2 = st.columns([3,1]); new = c1.text_input("Name")
-            if c2.form_submit_button("Add") and new: add_market(new); st.rerun()
+            c1, c2 = st.columns([4,1]) # AJUSTEMENT RATIO
+            new = c1.text_input("Name", placeholder="e.g. India")
+            # AJUSTEMENT ALIGNEMENT
+            c2.write(""); c2.write("") 
+            if c2.form_submit_button("Add", use_container_width=True) and new: add_market(new); st.rerun()
+        
         for i, m in enumerate(mkts):
             c1, c2, c3 = st.columns([4, 1, 1])
             c1.info(f"🌍 {m}")
             if c3.button("🗑️", key=f"dm{i}"): remove_market(i); st.rerun()
     
-    # 2. SOURCES (Renommé)
+    # 2. SOURCES (UI FIX)
     with td:
         doms, _ = get_domains()
         st.info("💡 Deep Search Sources.")
         with st.form("add_d"):
-            c1, c2 = st.columns([3,1]); new = c1.text_input("Domain")
-            if c2.form_submit_button("Add") and new: add_domain(new); st.rerun()
+            c1, c2 = st.columns([4,1]) # AJUSTEMENT RATIO
+            new = c1.text_input("Domain", placeholder="e.g. ansm.sante.fr")
+            # AJUSTEMENT ALIGNEMENT POUR S'ALIGNER AVEC INPUT
+            c2.write(""); c2.write("")
+            if c2.form_submit_button("Add", use_container_width=True) and new: add_domain(new); st.rerun()
+            
         for i, d in enumerate(doms):
             c1, c2, c3 = st.columns([4, 1, 1])
             c1.success(f"🌐 {d}")
@@ -538,7 +529,6 @@ def page_admin():
 def page_mia():
     st.title("📡 MIA Watch Tower"); st.markdown("---")
     
-    # Chargement config
     app_config = st.session_state.get("app_config", get_app_config())
     show_impact = app_config.get("enable_impact_analysis", "TRUE") == "TRUE"
     try: max_res = int(app_config.get("max_search_results", 5))
@@ -673,13 +663,11 @@ def page_mia():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # --- IMPACT ANALYSIS DYNAMIQUE (Configurable & Secured Variable) ---
+                # --- IMPACT ANALYSIS DYNAMIQUE ---
                 if show_impact:
                     with st.expander(f"⚡ Analyze Impact (Beta)", expanded=is_active):
-                        # FIX : Utilisation sécurisée de la variable topic si elle est vide dans le scope local
-                        current_topic_context = st.session_state.get("mia_topic_val") or topic or "General Product Context"
-                        
-                        prod_ctx = st.text_input("Product Context:", value=current_topic_context, key=f"ctx_{safe_id}")
+                        default_context = st.session_state.get("mia_topic_val", topic) or ""
+                        prod_ctx = st.text_input("Product Context:", value=default_context, key=f"ctx_{safe_id}")
                         
                         if st.button("Generate Analysis", key=f"btn_{safe_id}"):
                             st.session_state["active_analysis_id"] = safe_id
