@@ -4,6 +4,7 @@ import io
 import base64
 import uuid
 import json
+import hashlib
 from datetime import datetime, timedelta
 from openai import OpenAI
 from pypdf import PdfReader
@@ -55,6 +56,8 @@ def init_session_state():
         "last_eva_report": None,
         "last_eva_id": None,
         "last_mia_results": None,
+        # Nouvelle mémoire pour stocker les analyses d'impact individuelles
+        "mia_impact_results": {}, 
         "editing_market_index": None,
         "editing_domain_index": None,
         "mia_topic_val": "",
@@ -243,15 +246,13 @@ def extract_text_from_pdf(b):
     except Exception as e: return str(e)
 
 # =============================================================================
-# 5. VISUALISATION (TIMELINE)
+# 5. VISUALISATION
 # =============================================================================
 def display_timeline(items):
-    """Génère la frise chronologique avec zoom intelligent."""
     if not items: return
     
     timeline_data = []
     
-    # Extraction des dates
     for item in items:
         if "timeline" in item and item["timeline"]:
             for event in item["timeline"]:
@@ -274,41 +275,36 @@ def display_timeline(items):
     df = pd.DataFrame(timeline_data)
     df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
     df = df.dropna(subset=["Date"])
-    
     if df.empty: return
 
-    # --- LOGIQUE DE COULEUR ---
     now = datetime.now()
     def get_color(d):
         delta = (d - now).days
-        if delta < 0: return "Gray"      # Passé
-        if delta < 180: return "#e53935" # < 6 mois (Rouge)
-        if delta < 540: return "#fb8c00" # < 18 mois (Orange)
-        return "#1E88E5"                 # > 18 mois (Bleu)
+        if delta < 0: return "Gray"
+        if delta < 180: return "#e53935"
+        if delta < 540: return "#fb8c00"
+        return "#1E88E5"
 
     df["Color"] = df["Date"].apply(get_color)
 
-    # --- CONFIGURATION GRAPHIQUE ---
     fig = px.scatter(
         df, x="Date", y=[1]*len(df), color="Color",
         hover_data=["Task", "Description", "Source"],
         color_discrete_map="identity", height=130
     )
     
-    # --- CORRECTION ÉCHELLE (Force 2 ans Futur) ---
-    start_view = now - timedelta(days=60)
+    # CORRECTION : Echelle 12 mois passé / 24 mois futur
+    start_view = now - timedelta(days=365)
     end_view = now + timedelta(days=730)
-    max_date = max(df["Date"].max(), end_view)
     
     fig.update_xaxes(
-        range=[start_view, max_date], # Force les bornes mais s'adapte si données lointaines
+        range=[start_view, end_view],
         showgrid=True,
         gridcolor="#eee",
         zeroline=False
     )
     fig.update_yaxes(visible=False, showticklabels=False)
     
-    # Marqueur "Aujourd'hui"
     fig.add_vline(x=now.timestamp() * 1000, line_width=2, line_dash="dot", line_color="#295A63", annotation_text="Today")
     
     fig.update_layout(
@@ -372,28 +368,28 @@ def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     OUTPUT JSON: {{ "executive_summary": "...", "items": [ {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["..."], "impact": "High/Medium/Low", "category": "Regulation", "timeline": [] }} ] }}
     """
 
-# --- NOUVEAU PROMPT POUR IMPACT ANALYSIS (ACTIONABLE) ---
 def create_impact_analysis_prompt(prod_desc, item_content):
     return f"""
     ROLE: Senior Regulatory Affairs Expert.
     TASK: Specific Impact Assessment.
-    
     PRODUCT CONTEXT: "{prod_desc}"
     REGULATORY UPDATE: "{item_content}"
     
-    MISSION:
-    Determine if this specific update affects the product.
+    MISSION: Determine if this specific update affects the product.
     
     OUTPUT FORMAT (Markdown):
-    **Applicability:** [YES/NO/MAYBE] - Explain why clearly.
+    **Applicability:** [YES/NO/MAYBE] - Why?
     
-    **Gap Analysis:**
-    - Does it require a design change?
-    - Does it require new testing?
-    - Does it require labeling update?
+    **Key Technical Impacts:**
+    - [ ] Design/Hardware changes?
+    - [ ] Labeling/IFU changes?
+    - [ ] Testing standards update?
     
-    **Recommendation:**
-    One clear sentence on what to do next.
+    **Action Plan:**
+    1. Immediate action...
+    2. Secondary action...
+    
+    **Estimated Effort:** [Low/Medium/High]
     """
 
 def get_logo_html(size=50):
@@ -430,6 +426,17 @@ def apply_theme():
     .justified-text {
         text-align: justify; line-height: 1.6; color: #2c3e50;
         background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #295A63;
+    }
+    
+    /* LIENS HYPERTEXTES STYLISÉS (Correction 2) */
+    .mia-link a {
+        color: #295A63 !important;
+        text-decoration: underline;
+        font-weight: 700;
+        font-size: 1.1em;
+    }
+    .mia-link a:hover {
+        color: #C8A951 !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -515,7 +522,7 @@ def page_mia():
     with c_save:
         if topic:
             with st.popover("💾 Save as Watchlist"):
-                new_wl_name = st.text_input("Name your watchlist", placeholder="e.g. Monthly Cardio Watch")
+                new_wl_name = st.text_input("Name your watchlist")
                 if st.button("Save"):
                     if new_wl_name and topic:
                         save_watchlist(new_wl_name, topic, selected_markets, selected_label)
@@ -541,21 +548,22 @@ def page_mia():
                         item["category"] = item["category"].capitalize()
                     st.session_state["last_mia_results"] = parsed_data
                     log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
-                except Exception as e: st.error(f"Data processing failed: {str(e)}")
+                except Exception as e: st.error(f"Data failed: {e}")
 
     results = st.session_state.get("last_mia_results")
     if results:
         st.markdown("### 📋 Monitoring Report")
         
-        # --- TIMELINE VISUALISATION (OPTIONNELLE) ---
-        with st.expander("📅 View Strategic Timeline", expanded=False):
-            if results.get("items"):
-                display_timeline(results["items"])
-        # --------------------------------------------
-        
         st.markdown("---")
         summary = results.get('executive_summary', 'No summary.')
         st.markdown(f"""<div class="justified-text"><strong>Executive Summary:</strong> {summary}</div>""", unsafe_allow_html=True)
+        st.markdown("<br>", unsafe_allow_html=True)
+        
+        # --- TIMELINE DÉPLACÉE APRÈS RÉSUMÉ ---
+        if results.get("items"):
+            with st.expander("📅 View Strategic Timeline", expanded=True):
+                display_timeline(results["items"])
+        
         st.markdown("<br>", unsafe_allow_html=True)
 
         c_filter1, c_filter2, c_legend = st.columns([2, 2, 1], gap="large")
@@ -566,7 +574,7 @@ def page_mia():
             sel_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"])
         with c_legend:
             st.write(""); st.write("")
-            st.markdown("<div><span style='color:#e53935'>●</span> High <span style='color:#fb8c00'>●</span> Medium <span style='color:#43a047'>●</span> Low <br><span style='font-size:0.8em; color:gray'>📅 Dates refer to publication date</span></div>", unsafe_allow_html=True)
+            st.markdown("<div><span style='color:#e53935'>●</span> High <span style='color:#fb8c00'>●</span> Medium <span style='color:#43a047'>●</span> Low <br><span style='font-size:0.8em; color:gray'>📅 Dates = Publication</span></div>", unsafe_allow_html=True)
         
         st.markdown("---")
         items = results.get("items", [])
@@ -579,14 +587,18 @@ def page_mia():
             icon = "🔴" if impact == 'high' else "🟡" if impact == 'medium' else "🟢"
             cat_map = {"Regulation":"🏛️", "Standard":"📏", "Guidance":"📘", "Enforcement":"📢", "News":"📰"}
             
+            # --- CREATION DE CLÉ UNIQUE POUR L'ANALYSE ---
+            # On utilise un hash du titre pour que la clé soit persistante au reload
+            safe_id = hashlib.md5(item['title'].encode()).hexdigest()
+            
             with st.container():
                 st.markdown(f"""
                 <div class="info-card" style="min-height:auto; padding:1.5rem; margin-bottom:1rem;">
                     <div style="display:flex;">
                         <div style="font-size:1.5rem; margin-right:15px;">{icon}</div>
                         <div>
-                            <div style="font-weight:bold; font-size:1.1em; color:#1A202C;">
-                                <a href="{item['url']}" target="_blank" style="text-decoration:none; color:inherit;">
+                            <div class="mia-link">
+                                <a href="{item['url']}" target="_blank">
                                     {cat_map.get(cat,'📄')} {item['title']}
                                 </a>
                             </div>
@@ -599,17 +611,24 @@ def page_mia():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # --- SECTION ASSESS IMPACT AVEC CONTEXTE ÉDITABLE ---
-                with st.expander(f"⚡ Assess Impact on Product (Beta)"):
-                    # On permet de modifier le contexte produit s'il est vide ou imprécis
+                # --- SECTION ASSESS IMPACT CORRIGÉE ---
+                with st.expander(f"⚡ Analyze Impact (Beta)"):
                     default_context = st.session_state.get("mia_topic_val", topic)
-                    product_context = st.text_input("Product Context for Analysis:", value=default_context, key=f"ctx_{uuid.uuid4()}")
+                    # Clé unique pour l'input
+                    prod_ctx = st.text_input("Context:", value=default_context, key=f"ctx_{safe_id}")
                     
-                    if st.button("Generate Analysis", key=f"btn_ia_{uuid.uuid4()}"):
-                        with st.spinner("Evaluating impact..."):
-                            ia_prompt = create_impact_analysis_prompt(topic, product_context, f"{item['title']}: {item['summary']}")
+                    if st.button("Generate", key=f"btn_{safe_id}"):
+                        with st.spinner("Evaluating..."):
+                            ia_prompt = create_impact_analysis_prompt(topic, prod_ctx, f"{item['title']}: {item['summary']}")
                             ia_res = cached_ai_generation(ia_prompt, config.OPENAI_MODEL, 0.1)
-                            st.markdown(ia_res)
+                            # On stocke le résultat dans le dictionnaire de session
+                            st.session_state["mia_impact_results"][safe_id] = ia_res
+                            st.rerun()
+
+                    # Si un résultat existe pour cet ID, on l'affiche
+                    if safe_id in st.session_state["mia_impact_results"]:
+                        st.markdown("---")
+                        st.markdown(st.session_state["mia_impact_results"][safe_id])
 
 def page_olivia():
     st.title("🤖 OlivIA Workspace")
