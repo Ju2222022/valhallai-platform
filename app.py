@@ -43,6 +43,13 @@ DEFAULT_DOMAINS = [
     "reuters.com", "raps.org", "medtechdive.com", "complianceandrisks.com"
 ]
 
+# Valeurs par défaut de la configuration dynamique
+DEFAULT_APP_CONFIG = {
+    "enable_impact_analysis": "TRUE", # Affiche le module Assess Impact
+    "cache_ttl_hours": "1",           # Durée du cache en heures
+    "max_search_results": "5"         # Nombre de liens Tavily
+}
+
 # =============================================================================
 # 1. INITIALISATION STATE
 # =============================================================================
@@ -64,6 +71,8 @@ def init_session_state():
         "mia_markets_val": [],
         "mia_timeframe_index": 1,
         "current_watchlist": None,
+        # Stockage local de la config pour éviter de lire le GSheet à chaque clic
+        "app_config": DEFAULT_APP_CONFIG.copy()
     }
     for key, value in defaults.items():
         if key not in st.session_state:
@@ -107,6 +116,49 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
         log_sheet.append_row([now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), report_id, report_type, details, extra_metrics])
     except: pass
 
+# --- CONFIGURATION DYNAMIQUE (MIA_App_Config) ---
+def get_app_config():
+    """Lit la configuration depuis le GSheet."""
+    wb = get_gsheet_workbook()
+    config_dict = DEFAULT_APP_CONFIG.copy()
+    
+    if wb:
+        try:
+            try: 
+                sheet = wb.worksheet("MIA_App_Config")
+            except:
+                # Création auto si inexistant
+                sheet = wb.add_worksheet("MIA_App_Config", 20, 2)
+                sheet.append_row(["Setting_Key", "Value"])
+                for k, v in DEFAULT_APP_CONFIG.items():
+                    sheet.append_row([k, v])
+                return config_dict
+
+            rows = sheet.get_all_values()
+            if len(rows) > 1:
+                for row in rows[1:]:
+                    if len(row) >= 2:
+                        config_dict[row[0]] = row[1]
+        except: pass
+    
+    return config_dict
+
+def update_app_config(key, value):
+    """Met à jour une clé de configuration."""
+    wb = get_gsheet_workbook()
+    if wb:
+        try:
+            sheet = wb.worksheet("MIA_App_Config")
+            cell = sheet.find(key)
+            if cell:
+                # Met à jour la valeur (colonne B = col 2)
+                sheet.update_cell(cell.row, 2, str(value))
+                st.cache_data.clear() # Force le rechargement du cache
+                return True
+        except: pass
+    return False
+
+# --- HELPERS BDD ---
 def get_markets():
     wb = get_gsheet_workbook()
     if wb:
@@ -250,9 +302,7 @@ def extract_text_from_pdf(b):
 # =============================================================================
 def display_timeline(items):
     if not items: return
-    
     timeline_data = []
-    
     for item in items:
         if "timeline" in item and item["timeline"]:
             for event in item["timeline"]:
@@ -296,20 +346,10 @@ def display_timeline(items):
     start_view = now - timedelta(days=365)
     end_view = now + timedelta(days=730)
     
-    fig.update_xaxes(
-        range=[start_view, end_view],
-        showgrid=True,
-        gridcolor="#eee",
-        zeroline=False
-    )
+    fig.update_xaxes(range=[start_view, end_view], showgrid=True, gridcolor="#eee", zeroline=False)
     fig.update_yaxes(visible=False, showticklabels=False)
     fig.add_vline(x=now.timestamp() * 1000, line_width=2, line_dash="dot", line_color="#295A63", annotation_text="Today")
-    fig.update_layout(
-        margin=dict(l=10, r=10, t=10, b=10),
-        plot_bgcolor='white',
-        paper_bgcolor='white',
-        showlegend=False
-    )
+    fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor='white', paper_bgcolor='white', showlegend=False)
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
     
     c1, c2, c3, c4 = st.columns(4)
@@ -364,32 +404,19 @@ def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     OUTPUT JSON: {{ "executive_summary": "...", "items": [ {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["..."], "impact": "High/Medium/Low", "category": "Regulation", "timeline": [] }} ] }}
     """
 
-# --- PROMPT IMPACT (MODIFIÉ) ---
 def create_impact_analysis_prompt(prod_desc, item_content):
     return f"""
     ROLE: Senior Regulatory Affairs Expert.
     TASK: Specific Impact Assessment.
-    
     PRODUCT CONTEXT: "{prod_desc}"
     REGULATORY UPDATE: "{item_content}"
-    
-    MISSION:
-    Provide a factual Gap Analysis / Impact Assessment.
-    
+    MISSION: Provide a factual Gap Analysis / Impact Assessment.
     OUTPUT FORMAT (Markdown):
-    **Relevance Analysis:**
-    Explain clearly the connection (or lack thereof) between the regulation and the product specifics. Highlight what matches and what differs.
-    
-    **Potential Technical Impacts:**
-    - Design/Hardware: ...
-    - Labeling/IFU: ...
-    - Testing/Standards: ...
-    
-    **Recommended Next Steps:**
-    List 2-3 concrete actions for the Regulatory Affairs Manager to verify.
-    
+    **Relevance Analysis:** Explain connection.
+    **Potential Technical Impacts:** Design/Labeling/Testing.
+    **Recommended Next Steps:** Concrete actions.
     ---
-    *⚠️ Note: This analysis is for informational purposes and requires verification.*
+    *⚠️ Note: This analysis is for informational purposes and requires verification by a qualified RA professional.*
     """
 
 def get_logo_html(size=50):
@@ -427,19 +454,8 @@ def apply_theme():
         text-align: justify; line-height: 1.6; color: #2c3e50;
         background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #295A63;
     }
-    
-    /* LIENS HYPERTEXTES */
-    .mia-link a {
-        color: #295A63 !important;
-        text-decoration: none;
-        font-weight: 700;
-        font-size: 1.1em;
-        border-bottom: 2px solid #C8A951;
-    }
-    .mia-link a:hover {
-        color: #C8A951 !important;
-        background-color: #f0f0f0;
-    }
+    .mia-link a { color: #295A63 !important; text-decoration: none; font-weight: 700; font-size: 1.1em; border-bottom: 2px solid #C8A951; }
+    .mia-link a:hover { color: #C8A951 !important; background-color: #f0f0f0; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -456,7 +472,10 @@ def page_admin():
     c1.success(f"✅ DB: {wb.title}" if wb else "❌ DB Error")
     if c2.button("🔄 Refresh"): st.cache_data.clear(); st.rerun()
 
-    tm, td = st.tabs(["🌍 Markets", "🕵️‍♂️ Sources"])
+    # TABS ADMIN
+    tm, td, tc = st.tabs(["🌍 Markets", "🕵️‍♂️ Sources", "🎛️ MIA Settings"])
+    
+    # 1. MARKETS
     with tm:
         mkts, _ = get_markets()
         with st.form("add_m"):
@@ -466,6 +485,8 @@ def page_admin():
             c1, c2, c3 = st.columns([4, 1, 1])
             c1.info(f"🌍 {m}")
             if c3.button("🗑️", key=f"dm{i}"): remove_market(i); st.rerun()
+    
+    # 2. SOURCES
     with td:
         doms, _ = get_domains()
         st.info("💡 Deep Search Sources.")
@@ -477,9 +498,36 @@ def page_admin():
             c1.success(f"🌐 {d}")
             if c3.button("🗑️", key=f"dd{i}"): remove_domain(i); st.rerun()
 
+    # 3. MIA SETTINGS (FEATURE FLIPPING)
+    with tc:
+        st.markdown("#### Feature Management")
+        app_config = st.session_state["app_config"]
+        
+        # Toggle Assess Impact
+        current_impact_val = app_config.get("enable_impact_analysis", "TRUE") == "TRUE"
+        new_impact_val = st.toggle("⚡ Enable 'Assess Impact' Feature", value=current_impact_val)
+        
+        if new_impact_val != current_impact_val:
+            val_str = "TRUE" if new_impact_val else "FALSE"
+            update_app_config("enable_impact_analysis", val_str)
+            st.session_state["app_config"] = get_app_config() # Reload local
+            st.success("Updated!")
+            st.rerun()
+            
+        st.markdown("#### Performance")
+        current_cache = app_config.get("cache_ttl_hours", "1")
+        new_cache = st.text_input("Cache Duration (Hours)", value=current_cache)
+        if st.button("Update Cache"):
+            update_app_config("cache_ttl_hours", new_cache)
+            st.success("Updated!")
+
 def page_mia():
     st.title("📡 MIA Watch Tower"); st.markdown("---")
     
+    # Chargement de la config
+    app_config = st.session_state["app_config"]
+    show_impact_analysis = app_config.get("enable_impact_analysis", "TRUE") == "TRUE"
+
     watchlists = get_watchlists()
     wl_names = ["-- New Watch --"] + [w["name"] for w in watchlists]
     
@@ -556,9 +604,8 @@ def page_mia():
     if results:
         st.markdown("### 📋 Monitoring Report")
         
-        # --- TIMELINE VISUALISATION (DANS EXPANDER FERMÉ PAR DÉFAUT) ---
-        with st.expander("📅 View Strategic Timeline", expanded=False):
-            if results.get("items"):
+        if results.get("items"):
+            with st.expander("📅 View Strategic Timeline", expanded=False):
                 display_timeline(results["items"])
         
         st.markdown("---")
@@ -574,7 +621,7 @@ def page_mia():
             sel_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"])
         with c_legend:
             st.write(""); st.write("")
-            st.markdown("<div><span style='color:#e53935'>●</span> High <span style='color:#fb8c00'>●</span> Medium <span style='color:#43a047'>●</span> Low <br><span style='font-size:0.8em; color:gray'>📅 Dates = Publication</span></div>", unsafe_allow_html=True)
+            st.markdown("<div><span style='color:#e53935'>●</span> High <span style='color:#fb8c00'>●</span> Medium <span style='color:#43a047'>●</span> Low <br><span style='font-size:0.8em; color:gray'>📅 Dates refer to publication date</span></div>", unsafe_allow_html=True)
         
         st.markdown("---")
         items = results.get("items", [])
@@ -586,7 +633,6 @@ def page_mia():
             cat = item.get('category', 'News')
             icon = "🔴" if impact == 'high' else "🟡" if impact == 'medium' else "🟢"
             cat_map = {"Regulation":"🏛️", "Standard":"📏", "Guidance":"📘", "Enforcement":"📢", "News":"📰"}
-            
             safe_id = hashlib.md5(item['title'].encode()).hexdigest()
             is_active = (st.session_state.get("active_analysis_id") == safe_id)
             
@@ -610,27 +656,23 @@ def page_mia():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # --- IMPACT ANALYSIS : CONTEXTE VIDE PAR DEFAUT ---
-                with st.expander(f"⚡ Analyze Impact (Beta)", expanded=is_active):
-                    # Valeur par défaut = VIDE si session vide
-                    # Mais on utilise le topic comme 'suggestion' dans le code si l'utilisateur ne met rien
-                    # Pour l'UI, on laisse vide pour forcer l'utilisateur à réfléchir
-                    prod_ctx = st.text_input("Product Context:", value="", placeholder=f"e.g. {topic}", key=f"ctx_{safe_id}")
-                    
-                    if st.button("Generate Analysis", key=f"btn_{safe_id}"):
-                        # Si vide, on prend le topic global
-                        final_ctx = prod_ctx if prod_ctx else topic
-                        st.session_state["active_analysis_id"] = safe_id
+                # --- FEATURE FLIPPING : ASSESS IMPACT ---
+                if show_impact_analysis:
+                    with st.expander(f"⚡ Analyze Impact (Beta)", expanded=is_active):
+                        default_context = st.session_state.get("mia_topic_val", topic) or ""
+                        prod_ctx = st.text_input("Product Context:", value=default_context, key=f"ctx_{safe_id}")
                         
-                        with st.spinner("Evaluating..."):
-                            ia_prompt = create_impact_analysis_prompt(final_ctx, f"{item['title']}: {item['summary']}")
-                            ia_res = cached_ai_generation(ia_prompt, config.OPENAI_MODEL, 0.1)
-                            st.session_state["mia_impact_results"][safe_id] = ia_res
-                            st.rerun()
+                        if st.button("Generate Analysis", key=f"btn_{safe_id}"):
+                            st.session_state["active_analysis_id"] = safe_id
+                            with st.spinner("Evaluating..."):
+                                ia_prompt = create_impact_analysis_prompt(prod_ctx, f"{item['title']}: {item['summary']}")
+                                ia_res = cached_ai_generation(ia_prompt, config.OPENAI_MODEL, 0.1)
+                                st.session_state["mia_impact_results"][safe_id] = ia_res
+                                st.rerun()
 
-                    if safe_id in st.session_state["mia_impact_results"]:
-                        st.markdown("---")
-                        st.markdown(st.session_state["mia_impact_results"][safe_id])
+                        if safe_id in st.session_state["mia_impact_results"]:
+                            st.markdown("---")
+                            st.markdown(st.session_state["mia_impact_results"][safe_id])
 
 def page_olivia():
     st.title("🤖 OlivIA Workspace")
