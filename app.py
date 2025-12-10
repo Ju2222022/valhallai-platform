@@ -250,7 +250,9 @@ def extract_text_from_pdf(b):
 # =============================================================================
 def display_timeline(items):
     if not items: return
+    
     timeline_data = []
+    
     for item in items:
         if "timeline" in item and item["timeline"]:
             for event in item["timeline"]:
@@ -308,7 +310,6 @@ def display_timeline(items):
         paper_bgcolor='white',
         showlegend=False
     )
-    
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
     
     c1, c2, c3, c4 = st.columns(4)
@@ -363,7 +364,7 @@ def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     OUTPUT JSON: {{ "executive_summary": "...", "items": [ {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["..."], "impact": "High/Medium/Low", "category": "Regulation", "timeline": [] }} ] }}
     """
 
-# --- PROMPT IMPACT (CORRIGÉ: PAS D'ESTIMATION, DISCLAIMER AJOUTÉ) ---
+# --- PROMPT IMPACT (MODIFIÉ) ---
 def create_impact_analysis_prompt(prod_desc, item_content):
     return f"""
     ROLE: Senior Regulatory Affairs Expert.
@@ -388,7 +389,7 @@ def create_impact_analysis_prompt(prod_desc, item_content):
     List 2-3 concrete actions for the Regulatory Affairs Manager to verify.
     
     ---
-    *⚠️ Note: This AI analysis is for informational purposes and requires verification by a qualified RA professional.*
+    *⚠️ Note: This analysis is for informational purposes and requires verification.*
     """
 
 def get_logo_html(size=50):
@@ -401,6 +402,7 @@ def get_logo_html(size=50):
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
     return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 10px; display: inline-block;">'
 
+# --- THEME CSS ---
 def apply_theme():
     st.markdown("""
     <style>
@@ -554,7 +556,7 @@ def page_mia():
     if results:
         st.markdown("### 📋 Monitoring Report")
         
-        # TIMELINE VISUALISATION (DANS EXPANDER FERMÉ PAR DÉFAUT)
+        # --- TIMELINE VISUALISATION (DANS EXPANDER FERMÉ PAR DÉFAUT) ---
         with st.expander("📅 View Strategic Timeline", expanded=False):
             if results.get("items"):
                 display_timeline(results["items"])
@@ -572,7 +574,7 @@ def page_mia():
             sel_impacts = st.multiselect("🌪️ Filter by Impact", ["High", "Medium", "Low"], default=["High", "Medium", "Low"])
         with c_legend:
             st.write(""); st.write("")
-            st.markdown("<div><span style='color:#e53935'>●</span> High <span style='color:#fb8c00'>●</span> Medium <span style='color:#43a047'>●</span> Low <br><span style='font-size:0.8em; color:gray'>📅 Dates refer to publication date</span></div>", unsafe_allow_html=True)
+            st.markdown("<div><span style='color:#e53935'>●</span> High <span style='color:#fb8c00'>●</span> Medium <span style='color:#43a047'>●</span> Low <br><span style='font-size:0.8em; color:gray'>📅 Dates = Publication</span></div>", unsafe_allow_html=True)
         
         st.markdown("---")
         items = results.get("items", [])
@@ -608,17 +610,20 @@ def page_mia():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # --- IMPACT ANALYSIS : CORRECTION CONTEXTE VIDE ---
+                # --- IMPACT ANALYSIS : CONTEXTE VIDE PAR DEFAUT ---
                 with st.expander(f"⚡ Analyze Impact (Beta)", expanded=is_active):
-                    # On utilise 'topic' si la session est vide (sécurité)
-                    default_context = st.session_state.get("mia_topic_val", topic) or ""
-                    
-                    prod_ctx = st.text_input("Product Context:", value=default_context, key=f"ctx_{safe_id}")
+                    # Valeur par défaut = VIDE si session vide
+                    # Mais on utilise le topic comme 'suggestion' dans le code si l'utilisateur ne met rien
+                    # Pour l'UI, on laisse vide pour forcer l'utilisateur à réfléchir
+                    prod_ctx = st.text_input("Product Context:", value="", placeholder=f"e.g. {topic}", key=f"ctx_{safe_id}")
                     
                     if st.button("Generate Analysis", key=f"btn_{safe_id}"):
+                        # Si vide, on prend le topic global
+                        final_ctx = prod_ctx if prod_ctx else topic
                         st.session_state["active_analysis_id"] = safe_id
+                        
                         with st.spinner("Evaluating..."):
-                            ia_prompt = create_impact_analysis_prompt(prod_ctx, f"{item['title']}: {item['summary']}")
+                            ia_prompt = create_impact_analysis_prompt(final_ctx, f"{item['title']}: {item['summary']}")
                             ia_res = cached_ai_generation(ia_prompt, config.OPENAI_MODEL, 0.1)
                             st.session_state["mia_impact_results"][safe_id] = ia_res
                             st.rerun()
