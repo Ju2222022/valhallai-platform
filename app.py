@@ -43,7 +43,6 @@ DEFAULT_DOMAINS = [
     "reuters.com", "raps.org", "medtechdive.com", "complianceandrisks.com"
 ]
 
-# --- CONFIG DYNAMIQUE PAR DÉFAUT ---
 DEFAULT_APP_CONFIG = {
     "enable_impact_analysis": "TRUE",
     "cache_ttl_hours": "1",
@@ -71,7 +70,6 @@ def init_session_state():
         "mia_markets_val": [],
         "mia_timeframe_index": 1,
         "current_watchlist": None,
-        # Stockage local de la config
         "app_config": DEFAULT_APP_CONFIG.copy()
     }
     for key, value in defaults.items():
@@ -116,49 +114,53 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
         log_sheet.append_row([now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), report_id, report_type, details, extra_metrics])
     except: pass
 
-# --- GESTION DE LA CONFIGURATION (MIA_App_Config) ---
 def get_app_config():
-    """Lit la configuration depuis le GSheet ou initialise par défaut."""
+    """Lit la configuration et FORCE l'écriture si vide."""
     wb = get_gsheet_workbook()
     config_dict = DEFAULT_APP_CONFIG.copy()
-    
     if wb:
         try:
-            try: 
-                sheet = wb.worksheet("MIA_App_Config")
-            except:
-                # Création auto si inexistant
-                sheet = wb.add_worksheet("MIA_App_Config", 20, 2)
-                sheet.append_row(["Setting_Key", "Value"])
-                for k, v in DEFAULT_APP_CONFIG.items():
-                    sheet.append_row([k, v])
-                return config_dict
+            # 1. Récupération ou création de l'onglet
+            try: sheet = wb.worksheet("MIA_App_Config")
+            except: sheet = wb.add_worksheet("MIA_App_Config", 20, 2)
 
+            # 2. Lecture des données existantes
             rows = sheet.get_all_values()
-            if len(rows) > 1:
-                for row in rows[1:]:
-                    if len(row) >= 2:
-                        config_dict[row[0]] = row[1]
-        except: pass
-    
+
+            # 3. SYNC FORCEE : Si l'onglet est vide (ou juste header), on écrit les défauts
+            if len(rows) <= 1:
+                # On prépare les données à écrire
+                data_to_write = [["Setting_Key", "Value"]]
+                for k, v in DEFAULT_APP_CONFIG.items():
+                    data_to_write.append([k, v])
+                # Écriture en bloc
+                sheet.clear()
+                sheet.update("A1", data_to_write)
+                return config_dict # On retourne les défauts
+            
+            # 4. Parsing des données si elles existent
+            for row in rows[1:]:
+                if len(row) >= 2:
+                    config_dict[row[0]] = row[1]
+                    
+        except Exception as e:
+            print(f"Config Sync Error: {e}")
+            pass
     return config_dict
 
 def update_app_config(key, value):
-    """Met à jour une clé de configuration."""
     wb = get_gsheet_workbook()
     if wb:
         try:
             sheet = wb.worksheet("MIA_App_Config")
             cell = sheet.find(key)
             if cell:
-                # Met à jour la valeur (colonne B = col 2)
                 sheet.update_cell(cell.row, 2, str(value))
-                st.cache_data.clear() # Force le rechargement du cache
+                st.cache_data.clear()
                 return True
         except: pass
     return False
 
-# --- HELPERS BDD ---
 def get_markets():
     wb = get_gsheet_workbook()
     if wb:
@@ -272,16 +274,8 @@ def cached_run_deep_search(query, days=None, max_results=5):
         if not k: return None, "Key Missing"
         tavily = TavilyClient(api_key=k)
         doms, _ = get_domains()
-        
-        # PARAMETRE MAX RESULTS DYNAMIQUE
-        params = {
-            "query": query, 
-            "search_depth": "advanced", 
-            "max_results": max_results, # Utilise la config
-            "include_domains": doms
-        }
+        params = {"query": query, "search_depth": "advanced", "max_results": max_results, "include_domains": doms}
         if days: params["days"] = days
-        
         response = tavily.search(**params)
         txt = "### WEB RESULTS:\n"
         for r in response['results']:
@@ -310,9 +304,7 @@ def extract_text_from_pdf(b):
 # =============================================================================
 def display_timeline(items):
     if not items: return
-    
     timeline_data = []
-    
     for item in items:
         if "timeline" in item and item["timeline"]:
             for event in item["timeline"]:
@@ -356,20 +348,10 @@ def display_timeline(items):
     start_view = now - timedelta(days=365)
     end_view = now + timedelta(days=730)
     
-    fig.update_xaxes(
-        range=[start_view, end_view],
-        showgrid=True,
-        gridcolor="#eee",
-        zeroline=False
-    )
+    fig.update_xaxes(range=[start_view, end_view], showgrid=True, gridcolor="#eee", zeroline=False)
     fig.update_yaxes(visible=False, showticklabels=False)
     fig.add_vline(x=now.timestamp() * 1000, line_width=2, line_dash="dot", line_color="#295A63", annotation_text="Today")
-    fig.update_layout(
-        margin=dict(l=10, r=10, t=10, b=10),
-        plot_bgcolor='white',
-        paper_bgcolor='white',
-        showlegend=False
-    )
+    fig.update_layout(margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor='white', paper_bgcolor='white', showlegend=False)
     st.plotly_chart(fig, use_container_width=True, config={'displayModeBar': False})
     
     c1, c2, c3, c4 = st.columns(4)
@@ -449,6 +431,37 @@ def get_logo_html(size=50):
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
     return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 10px; display: inline-block;">'
 
+# --- THEME CSS ---
+def apply_theme():
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700&family=Inter:wght@400;600&display=swap');
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+    h1, h2, h3 { font-family: 'Montserrat', sans-serif !important; color: #295A63 !important; }
+    
+    div.stButton > button:first-child { 
+        background-color: #295A63 !important; color: white !important; 
+        border-radius: 8px; font-weight: 600; width: 100%; border: none;
+    }
+    div.stButton > button:first-child:hover { background-color: #C8A951 !important; color: black !important; }
+    
+    .info-card { 
+        background-color: white; padding: 2rem; border-radius: 12px; border: 1px solid #E2E8F0; 
+        min-height: 220px; display: flex; flex-direction: column; justify-content: flex-start;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    }
+    .stTextInput > div > div:focus-within { border-color: #295A63 !important; box-shadow: 0 0 0 1px #295A63 !important; }
+    
+    .justified-text {
+        text-align: justify; line-height: 1.6; color: #2c3e50;
+        background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #295A63;
+    }
+    
+    .mia-link a { color: #295A63 !important; text-decoration: none; font-weight: 700; font-size: 1.1em; border-bottom: 2px solid #C8A951; }
+    .mia-link a:hover { color: #C8A951 !important; background-color: #f0f0f0; }
+    </style>
+    """, unsafe_allow_html=True)
+
 # =============================================================================
 # 7. PAGES UI
 # =============================================================================
@@ -462,8 +475,7 @@ def page_admin():
     c1.success(f"✅ DB: {wb.title}" if wb else "❌ DB Error")
     if c2.button("🔄 Refresh"): st.cache_data.clear(); st.rerun()
 
-    # TABS ADMIN RESTAURÉS
-    tm, td, tc = st.tabs(["🌍 Markets", "🕵️‍♂️ Sources", "🎛️ MIA Settings"])
+    tm, td, tc = st.tabs(["🌍 Markets", "🕵️‍♂️ MIA Sources", "🎛️ MIA Settings"])
     
     # 1. MARKETS
     with tm:
@@ -476,7 +488,7 @@ def page_admin():
             c1.info(f"🌍 {m}")
             if c3.button("🗑️", key=f"dm{i}"): remove_market(i); st.rerun()
     
-    # 2. SOURCES
+    # 2. SOURCES (Renommé)
     with td:
         doms, _ = get_domains()
         st.info("💡 Deep Search Sources.")
@@ -491,10 +503,8 @@ def page_admin():
     # 3. SETTINGS
     with tc:
         st.markdown("#### Feature Flags")
-        # Chargement config avec sécurité
         app_config = st.session_state.get("app_config", get_app_config())
         
-        # Toggle Assess Impact
         curr_impact = app_config.get("enable_impact_analysis", "TRUE") == "TRUE"
         new_impact = st.toggle("⚡ Enable 'Assess Impact' Feature", value=curr_impact)
         
@@ -508,7 +518,6 @@ def page_admin():
         st.markdown("---")
         st.markdown("#### Performance")
         
-        # Max Results (1-100)
         curr_max = app_config.get("max_search_results", "5")
         new_max = st.text_input("Max Tavily Results (1-100)", value=curr_max)
         if st.button("Update Max Results"):
@@ -519,7 +528,6 @@ def page_admin():
             else:
                 st.error("Enter a number between 1 and 100.")
         
-        # Input Cache TTL (Alerte Reboot)
         curr_ttl = app_config.get("cache_ttl_hours", "1")
         new_ttl = st.text_input("Cache Duration (Hours)", value=curr_ttl)
         if st.button("Update Cache Duration"):
@@ -533,9 +541,7 @@ def page_mia():
     # Chargement config
     app_config = st.session_state.get("app_config", get_app_config())
     show_impact = app_config.get("enable_impact_analysis", "TRUE") == "TRUE"
-    # Récupération max_results avec fallback 5
-    try:
-        max_res = int(app_config.get("max_search_results", 5))
+    try: max_res = int(app_config.get("max_search_results", 5))
     except: max_res = 5
 
     watchlists = get_watchlists()
@@ -593,7 +599,6 @@ def page_mia():
         with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
             clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
             query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
-            # Utilisation du max_res configuré
             raw_data, error = cached_run_deep_search(query, days=days_limit, max_results=max_res)
             if not raw_data: st.error(f"Search failed: {error}")
             else:
@@ -668,11 +673,13 @@ def page_mia():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # --- IMPACT ANALYSIS DYNAMIQUE ---
+                # --- IMPACT ANALYSIS DYNAMIQUE (Configurable & Secured Variable) ---
                 if show_impact:
                     with st.expander(f"⚡ Analyze Impact (Beta)", expanded=is_active):
-                        default_context = st.session_state.get("mia_topic_val", topic) or ""
-                        prod_ctx = st.text_input("Product Context:", value=default_context, key=f"ctx_{safe_id}")
+                        # FIX : Utilisation sécurisée de la variable topic si elle est vide dans le scope local
+                        current_topic_context = st.session_state.get("mia_topic_val") or topic or "General Product Context"
+                        
+                        prod_ctx = st.text_input("Product Context:", value=current_topic_context, key=f"ctx_{safe_id}")
                         
                         if st.button("Generate Analysis", key=f"btn_{safe_id}"):
                             st.session_state["active_analysis_id"] = safe_id
@@ -811,35 +818,6 @@ def render_login():
         token = st.text_input("🔐 Access Token", type="password")
         if st.button("Enter", type="primary", use_container_width=True):
             check_password_manual(token)
-
-def apply_theme():
-    st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700&family=Inter:wght@400;600&display=swap');
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-    h1, h2, h3 { font-family: 'Montserrat', sans-serif !important; color: #295A63 !important; }
-    
-    div.stButton > button:first-child { 
-        background-color: #295A63 !important; color: white !important; 
-        border-radius: 8px; font-weight: 600; width: 100%; border: none;
-    }
-    div.stButton > button:first-child:hover { background-color: #C8A951 !important; color: black !important; }
-    
-    .info-card { 
-        background-color: white; padding: 2rem; border-radius: 12px; border: 1px solid #E2E8F0; 
-        min-height: 220px; display: flex; flex-direction: column; justify-content: flex-start;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-    }
-    .stTextInput > div > div:focus-within { border-color: #295A63 !important; box-shadow: 0 0 0 1px #295A63 !important; }
-    
-    .justified-text {
-        text-align: justify; line-height: 1.6; color: #2c3e50;
-        background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #295A63;
-    }
-    .mia-link a { color: #295A63 !important; text-decoration: none; font-weight: 700; font-size: 1.1em; border-bottom: 2px solid #C8A951; }
-    .mia-link a:hover { color: #C8A951 !important; background-color: #f0f0f0; }
-    </style>
-    """, unsafe_allow_html=True)
 
 def main():
     apply_theme()
