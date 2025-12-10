@@ -259,7 +259,7 @@ def cached_run_deep_search(query, days=None, max_results=5):
         tavily = TavilyClient(api_key=k)
         doms, _ = get_domains()
         
-        # Utilisation du paramètre max_results
+        # Passage du paramètre max_results dynamique
         params = {
             "query": query, 
             "search_depth": "advanced", 
@@ -315,6 +315,7 @@ def display_timeline(items):
             })
 
     if not timeline_data: return
+
     df = pd.DataFrame(timeline_data)
     df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
     df = df.dropna(subset=["Date"])
@@ -447,8 +448,19 @@ def apply_theme():
         text-align: justify; line-height: 1.6; color: #2c3e50;
         background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #295A63;
     }
-    .mia-link a { color: #295A63 !important; text-decoration: none; font-weight: 700; font-size: 1.1em; border-bottom: 2px solid #C8A951; }
-    .mia-link a:hover { color: #C8A951 !important; background-color: #f0f0f0; }
+    
+    /* LIENS HYPERTEXTES */
+    .mia-link a {
+        color: #295A63 !important;
+        text-decoration: none;
+        font-weight: 700;
+        font-size: 1.1em;
+        border-bottom: 2px solid #C8A951;
+    }
+    .mia-link a:hover {
+        color: #C8A951 !important;
+        background-color: #f0f0f0;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -467,7 +479,7 @@ def page_admin():
 
     tm, td, tc = st.tabs(["🌍 Markets", "🕵️‍♂️ Sources", "🎛️ MIA Settings"])
     
-    # TAB 1: MARKETS
+    # 1. MARKETS
     with tm:
         mkts, _ = get_markets()
         with st.form("add_m"):
@@ -478,7 +490,7 @@ def page_admin():
             c1.info(f"🌍 {m}")
             if c3.button("🗑️", key=f"dm{i}"): remove_market(i); st.rerun()
     
-    # TAB 2: SOURCES
+    # 2. SOURCES
     with td:
         doms, _ = get_domains()
         st.info("💡 Deep Search Sources.")
@@ -490,19 +502,17 @@ def page_admin():
             c1.success(f"🌐 {d}")
             if c3.button("🗑️", key=f"dd{i}"): remove_domain(i); st.rerun()
 
-    # TAB 3: SETTINGS
+    # 3. SETTINGS
     with tc:
         st.markdown("#### Feature Flags")
-        # Chargement config (avec création auto si vide)
         app_config = st.session_state.get("app_config")
         if not app_config:
             st.session_state["app_config"] = get_app_config()
             app_config = st.session_state["app_config"]
             
-        # Toggle Assess Impact
+        # Toggle Impact
         curr_impact = app_config.get("enable_impact_analysis", "TRUE") == "TRUE"
         new_impact = st.toggle("⚡ Enable 'Assess Impact' Feature", value=curr_impact)
-        
         if new_impact != curr_impact:
             val = "TRUE" if new_impact else "FALSE"
             update_app_config("enable_impact_analysis", val)
@@ -512,34 +522,23 @@ def page_admin():
 
         st.markdown("---")
         st.markdown("#### Performance")
-        
-        # Input Max Results
+        # Max Results
         curr_max = app_config.get("max_search_results", "5")
-        new_max = st.text_input("Max Tavily Results (1-10)", value=curr_max)
+        new_max = st.text_input("Max Tavily Results (1-100)", value=curr_max)
         if st.button("Update Max Results"):
-            if new_max.isdigit() and 1 <= int(new_max) <= 10:
+            if new_max.isdigit() and 1 <= int(new_max) <= 100:
                 update_app_config("max_search_results", new_max)
                 st.session_state["app_config"]["max_search_results"] = new_max
                 st.success("✅ Updated! Effective immediately.")
-            else:
-                st.error("Enter a number between 1 and 10.")
-        
-        # Input Cache TTL
-        curr_ttl = app_config.get("cache_ttl_hours", "1")
-        new_ttl = st.text_input("Cache Duration (Hours)", value=curr_ttl)
-        if st.button("Update Cache Duration"):
-             update_app_config("cache_ttl_hours", new_ttl)
-             st.success("Saved.")
-             st.warning("⚠️ Restart Required: This change will apply after the next app reboot.")
+            else: st.error("Enter valid number (1-100).")
 
 def page_mia():
     st.title("📡 MIA Watch Tower"); st.markdown("---")
     
-    # Chargement config pour Feature Flipping
     app_config = st.session_state.get("app_config", get_app_config())
     show_impact = app_config.get("enable_impact_analysis", "TRUE") == "TRUE"
     max_res = int(app_config.get("max_search_results", 5))
-    
+
     watchlists = get_watchlists()
     wl_names = ["-- New Watch --"] + [w["name"] for w in watchlists]
     
@@ -584,7 +583,7 @@ def page_mia():
     with c_save:
         if topic:
             with st.popover("💾 Save as Watchlist"):
-                new_wl_name = st.text_input("Name your watchlist", placeholder="e.g. Monthly Cardio Watch")
+                new_wl_name = st.text_input("Name your watchlist")
                 if st.button("Save"):
                     if new_wl_name and topic:
                         save_watchlist(new_wl_name, topic, selected_markets, selected_label)
@@ -595,7 +594,6 @@ def page_mia():
         with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
             clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
             query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
-            # Utilisation du paramètre dynamique max_results
             raw_data, error = cached_run_deep_search(query, days=days_limit, max_results=max_res)
             if not raw_data: st.error(f"Search failed: {error}")
             else:
@@ -670,7 +668,7 @@ def page_mia():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # --- IMPACT ANALYSIS DYNAMIQUE (Configurable) ---
+                # --- IMPACT ANALYSIS ---
                 if show_impact:
                     with st.expander(f"⚡ Analyze Impact (Beta)", expanded=is_active):
                         default_context = st.session_state.get("mia_topic_val", topic) or ""
