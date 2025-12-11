@@ -50,7 +50,7 @@ DEFAULT_APP_CONFIG = {
 }
 
 # =============================================================================
-# 1. GESTION DES DONNÉES (CRITIQUE : DÉPLACÉ EN TÊTE)
+# 1. GESTION DES DONNÉES
 # =============================================================================
 @st.cache_resource
 def get_gsheet_workbook():
@@ -76,35 +76,25 @@ def get_gsheet_workbook():
         return None
 
 def get_app_config():
-    """Lit la configuration depuis le GSheet avec nettoyage des clés."""
+    """Lit la configuration depuis le GSheet avec nettoyage."""
     wb = get_gsheet_workbook()
     config_dict = DEFAULT_APP_CONFIG.copy()
-    
     if wb:
         try:
-            try: 
-                sheet = wb.worksheet("MIA_App_Config")
+            try: sheet = wb.worksheet("MIA_App_Config")
             except:
-                # Création auto si inexistant
                 sheet = wb.add_worksheet("MIA_App_Config", 20, 2)
                 sheet.append_row(["Setting_Key", "Value"])
-                for k, v in DEFAULT_APP_CONFIG.items():
-                    sheet.append_row([k, v])
+                for k, v in DEFAULT_APP_CONFIG.items(): sheet.append_row([k, v])
                 return config_dict
-
             rows = sheet.get_all_values()
             if len(rows) > 1:
                 for row in rows[1:]:
                     if len(row) >= 2:
-                        # CRITIQUE : .strip() pour éviter les erreurs d'espaces
                         key = str(row[0]).strip()
                         val = str(row[1]).strip()
-                        if key in config_dict:
-                            config_dict[key] = val
-        except Exception as e: 
-            print(f"Config Read Error: {e}")
-            pass
-    
+                        if key in config_dict: config_dict[key] = val
+        except: pass
     return config_dict
 
 def update_app_config(key, value):
@@ -174,7 +164,6 @@ def get_domains():
                 sheet = wb.add_worksheet("Watch_domains", 100, 1)
                 for d in DEFAULT_DOMAINS: sheet.append_row([d])
                 return DEFAULT_DOMAINS, True
-            
             vals = sheet.col_values(1)
             if not vals:
                  for d in DEFAULT_DOMAINS: sheet.append_row([d])
@@ -243,10 +232,9 @@ def delete_watchlist(watchlist_id):
     return False
 
 # =============================================================================
-# 2. INITIALISATION SESSION STATE (APRES FONCTIONS DATA)
+# 2. INITIALISATION SESSION STATE
 # =============================================================================
 def init_session_state():
-    # CHARGEMENT CONFIG AU DEMARRAGE
     if "app_config" not in st.session_state:
         st.session_state["app_config"] = get_app_config()
 
@@ -290,14 +278,28 @@ def cached_run_deep_search(query, days=None, max_results=5):
         if not k: return None, "Key Missing"
         tavily = TavilyClient(api_key=k)
         doms, _ = get_domains()
-        params = {"query": query, "search_depth": "advanced", "max_results": max_results, "include_domains": doms}
+        
+        params = {
+            "query": query, 
+            "search_depth": "advanced", 
+            "max_results": max_results, 
+            "include_domains": doms
+        }
         if days: params["days"] = days
+        
         response = tavily.search(**params)
-        txt = "### WEB RESULTS:\n"
+        
+        # --- CORRECTION : COMPTEUR DE RESULTATS BRUTS ---
+        raw_count = len(response.get('results', []))
+        
+        txt = f"### WEB RESULTS ({raw_count} FOUND):\n"
         for r in response['results']:
             txt += f"- Title: {r['title']}\n  URL: {r['url']}\n  Content: {r['content'][:800]}...\n\n"
-        return txt, None
-    except Exception as e: return None, str(e)
+        
+        # RETOURNE 3 VALEURS (Data, Error, Count)
+        return txt, None, raw_count 
+
+    except Exception as e: return None, str(e), 0
 
 @st.cache_data(show_spinner=False)
 def cached_ai_generation(prompt, model, temp, json_mode=False):
@@ -472,6 +474,7 @@ def apply_theme():
         text-align: justify; line-height: 1.6; color: #2c3e50;
         background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #295A63;
     }
+    
     .mia-link a { color: #295A63 !important; text-decoration: none; font-weight: 700; font-size: 1.1em; border-bottom: 2px solid #C8A951; }
     .mia-link a:hover { color: #C8A951 !important; background-color: #f0f0f0; }
     </style>
@@ -492,6 +495,7 @@ def page_admin():
 
     tm, td, tc = st.tabs(["🌍 Markets", "🕵️‍♂️ MIA Sources", "🎛️ MIA Settings"])
     
+    # 1. MARKETS (ALIGNE)
     with tm:
         mkts, _ = get_markets()
         with st.form("add_m"):
@@ -506,6 +510,7 @@ def page_admin():
                      st.write("Delete?")
                      if st.button("Yes", key=f"y_m_{i}"): remove_market(i); st.rerun()
     
+    # 2. SOURCES (ALIGNE)
     with td:
         doms, _ = get_domains()
         st.info("💡 Deep Search Sources.")
@@ -521,6 +526,7 @@ def page_admin():
                      st.write("Delete?")
                      if st.button("Yes", key=f"y_d_{i}"): remove_domain(i); st.rerun()
 
+    # 3. SETTINGS
     with tc:
         st.markdown("#### Feature Flags")
         app_config = st.session_state.get("app_config", get_app_config())
@@ -538,7 +544,6 @@ def page_admin():
         st.markdown("---")
         st.markdown("#### Performance")
         
-        # Max Results
         curr_max = app_config.get("max_search_results", "5")
         new_max = st.text_input("Max Tavily Results (1-100)", value=curr_max)
         if st.button("Update Max Results"):
@@ -546,7 +551,8 @@ def page_admin():
                 update_app_config("max_search_results", new_max)
                 st.session_state["app_config"]["max_search_results"] = new_max
                 st.success("✅ Updated! Effective immediately.")
-            else: st.error("Enter a number between 1 and 100.")
+            else:
+                st.error("Enter a number between 1 and 100.")
         
         curr_ttl = app_config.get("cache_ttl_hours", "1")
         new_ttl = st.text_input("Cache Duration (Hours)", value=curr_ttl)
@@ -614,16 +620,22 @@ def page_mia():
                         save_watchlist(new_wl_name, topic, selected_markets, selected_label)
                         st.toast("Saved!", icon="💾")
                         st.cache_data.clear()
+                        
+        # INFO METRIQUE DISCRETE
+        if launch: st.session_state["mia_raw_count"] = 0 
 
     if launch and topic:
         with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
             clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
             query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
+            
+            # --- APPEL CORRECT AVEC 3 VALEURS DE RETOUR ---
             raw_data, error, raw_count = cached_run_deep_search(query, days=days_limit, max_results=max_res)
             
             if not raw_data: st.error(f"Search failed: {error}")
             else:
                 st.session_state["mia_raw_count"] = raw_count
+                
                 prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
                 json_str = cached_ai_generation(prompt, config.OPENAI_MODEL, 0.1, json_mode=True)
                 try:
@@ -642,6 +654,7 @@ def page_mia():
     if results:
         st.markdown("### 📋 Monitoring Report")
         
+        # Info métrique
         raw_c = st.session_state.get("mia_raw_count", 0)
         kept_c = len(results.get("items", []))
         st.caption(f"🔍 MIA Intelligence: Analyzed {raw_c} sources → Kept {kept_c} relevant updates.")
@@ -699,6 +712,7 @@ def page_mia():
                 </div>
                 """, unsafe_allow_html=True)
                 
+                # --- IMPACT ANALYSIS DYNAMIQUE ---
                 if show_impact:
                     with st.expander(f"⚡ Analyze Impact (Beta)", expanded=is_active):
                         default_context = st.session_state.get("mia_topic_val", topic) or ""
