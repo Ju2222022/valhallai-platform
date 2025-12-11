@@ -34,7 +34,8 @@ if "mia" not in config.AGENTS:
         "description": "Market Intelligence Agent (Regulatory Watch & Monitoring)."
     }
 
-DEFAULT_DOMAINS = [
+# Liste de démarrage (Servira uniquement à l'initialisation de la BDD)
+INITIAL_DOMAINS = [
     "eur-lex.europa.eu", "europa.eu", "echa.europa.eu", "cenelec.eu", 
     "single-market-economy.ec.europa.eu",
     "fda.gov", "fcc.gov", "cpsc.gov", "osha.gov", "phmsa.dot.gov",
@@ -50,7 +51,7 @@ DEFAULT_APP_CONFIG = {
 }
 
 # =============================================================================
-# 1. GESTION DES DONNÉES (DÉPLACÉ EN PREMIER POUR L'INITIALISATION)
+# 1. GESTION DES DONNÉES (RÉÉCRITE POUR SUPPRIMER LE FALLBACKFANTÔME)
 # =============================================================================
 @st.cache_resource
 def get_gsheet_workbook():
@@ -74,42 +75,32 @@ def get_gsheet_workbook():
     except: return None
 
 def get_app_config():
-    """Lit la configuration depuis le GSheet (Source de Vérité)."""
     wb = get_gsheet_workbook()
     config_dict = DEFAULT_APP_CONFIG.copy()
-    
     if wb:
         try:
-            try: 
-                sheet = wb.worksheet("MIA_App_Config")
+            try: sheet = wb.worksheet("MIA_App_Config")
             except:
-                # Création auto si inexistant
                 sheet = wb.add_worksheet("MIA_App_Config", 20, 2)
                 sheet.append_row(["Setting_Key", "Value"])
-                for k, v in DEFAULT_APP_CONFIG.items():
-                    sheet.append_row([k, v])
+                for k, v in DEFAULT_APP_CONFIG.items(): sheet.append_row([k, v])
                 return config_dict
-
             rows = sheet.get_all_values()
             if len(rows) > 1:
                 for row in rows[1:]:
-                    if len(row) >= 2:
-                        config_dict[row[0]] = row[1]
+                    if len(row) >= 2: config_dict[row[0]] = row[1]
         except: pass
-    
     return config_dict
 
 def update_app_config(key, value):
-    """Met à jour une clé de configuration."""
     wb = get_gsheet_workbook()
     if wb:
         try:
             sheet = wb.worksheet("MIA_App_Config")
             cell = sheet.find(key)
             if cell:
-                # Met à jour la valeur (colonne B = col 2)
                 sheet.update_cell(cell.row, 2, str(value))
-                st.cache_data.clear() # Force le rechargement du cache
+                st.cache_data.clear()
                 return True
         except: pass
     return False
@@ -127,10 +118,9 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
     except: pass
 
 # =============================================================================
-# 2. INITIALISATION STATE (APRES LES FONCTIONS DATA)
+# 2. INITIALISATION STATE
 # =============================================================================
 def init_session_state():
-    # 1. On charge la config depuis le Cloud AVANT tout le reste
     if "app_config" not in st.session_state:
         st.session_state["app_config"] = get_app_config()
 
@@ -159,14 +149,22 @@ def init_session_state():
 init_session_state()
 
 # =============================================================================
-# 3. HELPERS BDD (SUITE)
+# 3. HELPERS BDD (CORRIGÉS : PLUS DE FALLBACK FANTÔME)
 # =============================================================================
 def get_markets():
     wb = get_gsheet_workbook()
     if wb:
-        try: return (wb.sheet1.col_values(1) if wb.sheet1.col_values(1) else []), True
+        try: 
+            vals = wb.sheet1.col_values(1)
+            # Auto-Init : Si la feuille est vide, on la remplit UNE FOIS
+            if not vals:
+                for m in config.DEFAULT_MARKETS: wb.sheet1.append_row([m])
+                return config.DEFAULT_MARKETS, True
+            return vals, True
         except: pass
-    return config.DEFAULT_MARKETS, False
+    
+    # Si pas de connexion, on renvoie VIDE (pas de faux espoirs)
+    return [], False
 
 def add_market(name):
     wb = get_gsheet_workbook()
@@ -195,10 +193,18 @@ def get_domains():
             try: sheet = wb.worksheet("Watch_domains")
             except: 
                 sheet = wb.add_worksheet("Watch_domains", 100, 1)
-                for d in DEFAULT_DOMAINS: sheet.append_row([d])
-            return (sheet.col_values(1) if sheet.col_values(1) else DEFAULT_DOMAINS), True
+                # Auto-Init des domaines
+                for d in INITIAL_DOMAINS: sheet.append_row([d])
+                return INITIAL_DOMAINS, True
+            
+            vals = sheet.col_values(1)
+            if not vals: # Si vide, on réinitialise
+                 for d in INITIAL_DOMAINS: sheet.append_row([d])
+                 return INITIAL_DOMAINS, True
+            return vals, True
         except: pass
-    return DEFAULT_DOMAINS, False
+    # Si pas de connexion, vide.
+    return [], False
 
 def add_domain(name):
     wb = get_gsheet_workbook()
@@ -273,9 +279,16 @@ def cached_run_deep_search(query, days=None, max_results=5):
         k = st.secrets.get("TAVILY_API_KEY")
         if not k: return None, "Key Missing"
         tavily = TavilyClient(api_key=k)
-        doms, _ = get_domains()
-        params = {"query": query, "search_depth": "advanced", "max_results": max_results, "include_domains": doms}
+        doms, _ = get_domains() # Si liste vide (déconnecté), la recherche sera ouverte ou échouera proprement
+        
+        params = {
+            "query": query, 
+            "search_depth": "advanced", 
+            "max_results": max_results, 
+            "include_domains": doms if doms else None # Tavily gère None comme "tout le web"
+        }
         if days: params["days"] = days
+        
         response = tavily.search(**params)
         txt = "### WEB RESULTS:\n"
         for r in response['results']:
@@ -305,11 +318,9 @@ def extract_text_from_pdf(b):
 def display_timeline(items):
     if not items: return
     timeline_data = []
-    
     for item in items:
-        # Sécurité anti-crash
+        # Sécurité
         if not isinstance(item, dict): continue
-        
         if "timeline" in item and isinstance(item["timeline"], list) and item["timeline"]:
             for event in item["timeline"]:
                 if isinstance(event, dict):
@@ -328,7 +339,6 @@ def display_timeline(items):
             })
 
     if not timeline_data: return
-
     df = pd.DataFrame(timeline_data)
     df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
     df = df.dropna(subset=["Date"])
@@ -480,7 +490,7 @@ def page_admin():
     c1.success(f"✅ DB: {wb.title}" if wb else "❌ DB Error")
     if c2.button("🔄 Refresh"): st.cache_data.clear(); st.rerun()
 
-    tm, td, tc = st.tabs(["🌍 Markets", "🕵️‍♂️ MIA Sources", "🎛️ MIA Settings"])
+    tm, td, tc = st.tabs(["🌍 Markets", "🕵️‍♂️ Sources", "🎛️ MIA Settings"])
     
     # 1. MARKETS (ALIGNE)
     with tm:
@@ -510,8 +520,7 @@ def page_admin():
     # 3. SETTINGS
     with tc:
         st.markdown("#### Feature Flags")
-        # CONFIGURATION PERSISTANTE (CHARGEE AU START)
-        app_config = st.session_state.get("app_config", DEFAULT_APP_CONFIG)
+        app_config = st.session_state.get("app_config", get_app_config())
         
         curr_impact = app_config.get("enable_impact_analysis", "TRUE") == "TRUE"
         new_impact = st.toggle("⚡ Enable 'Assess Impact' Feature", value=curr_impact)
@@ -546,7 +555,7 @@ def page_admin():
 def page_mia():
     st.title("📡 MIA Watch Tower"); st.markdown("---")
     
-    app_config = st.session_state.get("app_config", DEFAULT_APP_CONFIG)
+    app_config = st.session_state.get("app_config", get_app_config())
     show_impact = app_config.get("enable_impact_analysis", "TRUE") == "TRUE"
     try: max_res = int(app_config.get("max_search_results", 5))
     except: max_res = 5
