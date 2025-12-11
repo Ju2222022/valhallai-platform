@@ -50,36 +50,7 @@ DEFAULT_APP_CONFIG = {
 }
 
 # =============================================================================
-# 1. INITIALISATION STATE
-# =============================================================================
-def init_session_state():
-    defaults = {
-        "authenticated": False,
-        "admin_authenticated": False,
-        "current_page": "Dashboard",
-        "last_olivia_report": None,
-        "last_olivia_id": None, 
-        "last_eva_report": None,
-        "last_eva_id": None,
-        "last_mia_results": None,
-        "mia_impact_results": {}, 
-        "active_analysis_id": None,
-        "editing_market_index": None,
-        "editing_domain_index": None,
-        "mia_topic_val": "",
-        "mia_markets_val": [],
-        "mia_timeframe_index": 1,
-        "current_watchlist": None,
-        "app_config": DEFAULT_APP_CONFIG.copy()
-    }
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-init_session_state()
-
-# =============================================================================
-# 2. GESTION DES DONNÉES
+# 1. GESTION DES DONNÉES (DÉPLACÉ ICI POUR ÊTRE ACCESSIBLE AU DEMARRAGE)
 # =============================================================================
 @st.cache_resource
 def get_gsheet_workbook():
@@ -102,19 +73,8 @@ def get_gsheet_workbook():
         return gc.open_by_url(st.secrets["gsheets"]["url"])
     except: return None
 
-def log_usage(report_type, report_id, details="", extra_metrics=""):
-    wb = get_gsheet_workbook()
-    if not wb: return
-    try:
-        try: log_sheet = wb.worksheet("Logs")
-        except: log_sheet = wb.add_worksheet(title="Logs", rows=1000, cols=6)
-        if not log_sheet.cell(1, 1).value:
-            log_sheet.update("A1:F1", [["Date", "Time", "Report ID", "Type", "Details", "Metrics"]])
-        now = datetime.now()
-        log_sheet.append_row([now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), report_id, report_type, details, extra_metrics])
-    except: pass
-
 def get_app_config():
+    """Lit la configuration depuis le GSheet (Source de Vérité)."""
     wb = get_gsheet_workbook()
     config_dict = DEFAULT_APP_CONFIG.copy()
     if wb:
@@ -144,6 +104,55 @@ def update_app_config(key, value):
                 return True
         except: pass
     return False
+
+# =============================================================================
+# 2. INITIALISATION STATE (APRES LES FONCTIONS DATA)
+# =============================================================================
+def init_session_state():
+    defaults = {
+        "authenticated": False,
+        "admin_authenticated": False,
+        "current_page": "Dashboard",
+        "last_olivia_report": None,
+        "last_olivia_id": None, 
+        "last_eva_report": None,
+        "last_eva_id": None,
+        "last_mia_results": None,
+        "mia_impact_results": {}, 
+        "active_analysis_id": None,
+        "editing_market_index": None,
+        "editing_domain_index": None,
+        "mia_topic_val": "",
+        "mia_markets_val": [],
+        "mia_timeframe_index": 1,
+        "current_watchlist": None,
+        # CORRECTION ICI : On charge la config depuis le Sheet au démarrage
+        "app_config": None 
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+            
+    # Chargement unique au démarrage si vide
+    if st.session_state["app_config"] is None:
+        st.session_state["app_config"] = get_app_config()
+
+init_session_state()
+
+# =============================================================================
+# 3. AUTRES FONCTIONS DATA
+# =============================================================================
+def log_usage(report_type, report_id, details="", extra_metrics=""):
+    wb = get_gsheet_workbook()
+    if not wb: return
+    try:
+        try: log_sheet = wb.worksheet("Logs")
+        except: log_sheet = wb.add_worksheet(title="Logs", rows=1000, cols=6)
+        if not log_sheet.cell(1, 1).value:
+            log_sheet.update("A1:F1", [["Date", "Time", "Report ID", "Type", "Details", "Metrics"]])
+        now = datetime.now()
+        log_sheet.append_row([now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), report_id, report_type, details, extra_metrics])
+    except: pass
 
 def get_markets():
     wb = get_gsheet_workbook()
@@ -307,6 +316,7 @@ def display_timeline(items):
             })
 
     if not timeline_data: return
+
     df = pd.DataFrame(timeline_data)
     df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
     df = df.dropna(subset=["Date"])
@@ -460,25 +470,25 @@ def page_admin():
 
     tm, td, tc = st.tabs(["🌍 Markets", "🕵️‍♂️ MIA Sources", "🎛️ MIA Settings"])
     
-    # 1. MARKETS (FIXED ALIGNMENT)
+    # 1. MARKETS (ALIGNE)
     with tm:
         mkts, _ = get_markets()
         with st.form("add_m"):
             c1, c2 = st.columns([4,1], vertical_alignment="bottom")
-            new = c1.text_input("Name", placeholder="e.g. India")
+            new = c1.text_input("Name")
             if c2.form_submit_button("Add", use_container_width=True) and new: add_market(new); st.rerun()
         for i, m in enumerate(mkts):
             c1, c2, c3 = st.columns([4, 1, 1])
             c1.info(f"🌍 {m}")
             if c3.button("🗑️", key=f"dm{i}"): remove_market(i); st.rerun()
     
-    # 2. SOURCES (FIXED ALIGNMENT)
+    # 2. SOURCES (ALIGNE)
     with td:
         doms, _ = get_domains()
         st.info("💡 Deep Search Sources.")
         with st.form("add_d"):
             c1, c2 = st.columns([4,1], vertical_alignment="bottom")
-            new = c1.text_input("Domain", placeholder="e.g. ansm.sante.fr")
+            new = c1.text_input("Domain")
             if c2.form_submit_button("Add", use_container_width=True) and new: add_domain(new); st.rerun()
         for i, d in enumerate(doms):
             c1, c2, c3 = st.columns([4, 1, 1])
