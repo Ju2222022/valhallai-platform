@@ -71,12 +71,10 @@ def get_gsheet_workbook():
         }
         gc = gspread.service_account_from_dict(creds_dict)
         return gc.open_by_url(st.secrets["gsheets"]["url"])
-    except Exception as e: 
-        print(f"DB Error: {e}")
-        return None
+    except: return None
 
 def get_app_config():
-    """Lit la configuration depuis le GSheet avec nettoyage."""
+    """Lit la configuration depuis le GSheet (Source de Vérité)."""
     wb = get_gsheet_workbook()
     config_dict = DEFAULT_APP_CONFIG.copy()
     if wb:
@@ -90,10 +88,7 @@ def get_app_config():
             rows = sheet.get_all_values()
             if len(rows) > 1:
                 for row in rows[1:]:
-                    if len(row) >= 2:
-                        key = str(row[0]).strip()
-                        val = str(row[1]).strip()
-                        if key in config_dict: config_dict[key] = val
+                    if len(row) >= 2: config_dict[row[0]] = row[1]
         except: pass
     return config_dict
 
@@ -122,7 +117,6 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
         log_sheet.append_row([now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), report_id, report_type, details, extra_metrics])
     except: pass
 
-# --- HELPERS BDD ---
 def get_markets():
     wb = get_gsheet_workbook()
     if wb:
@@ -164,6 +158,7 @@ def get_domains():
                 sheet = wb.add_worksheet("Watch_domains", 100, 1)
                 for d in DEFAULT_DOMAINS: sheet.append_row([d])
                 return DEFAULT_DOMAINS, True
+            
             vals = sheet.col_values(1)
             if not vals:
                  for d in DEFAULT_DOMAINS: sheet.append_row([d])
@@ -288,15 +283,11 @@ def cached_run_deep_search(query, days=None, max_results=5):
         if days: params["days"] = days
         
         response = tavily.search(**params)
-        
-        # --- CORRECTION : COMPTEUR DE RESULTATS BRUTS ---
         raw_count = len(response.get('results', []))
         
         txt = f"### WEB RESULTS ({raw_count} FOUND):\n"
         for r in response['results']:
             txt += f"- Title: {r['title']}\n  URL: {r['url']}\n  Content: {r['content'][:800]}...\n\n"
-        
-        # RETOURNE 3 VALEURS (Data, Error, Count)
         return txt, None, raw_count 
 
     except Exception as e: return None, str(e), 0
@@ -337,16 +328,18 @@ def display_timeline(items):
         elif "date" in item:
             timeline_data.append({
                 "Task": "Publication",
-                "Date": item["date"],
+                "Date": item.get("date"),
                 "Description": item.get("title", "Update"),
                 "Source": item.get("source_name", "Web")
             })
 
     if not timeline_data: return
     df = pd.DataFrame(timeline_data)
-    df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
+    df["Date"] = pd.to_datetime(df["Date"], errors='coerce', utc=True)
     df = df.dropna(subset=["Date"])
     if df.empty: return
+    
+    df["Date"] = df["Date"].dt.tz_localize(None)
 
     now = datetime.now()
     def get_color(d):
@@ -411,18 +404,88 @@ def create_eva_prompt(ctx, doc):
     Mission: Compliance Audit. Output: Strict English Markdown.
     Structure: 1. Verdict, 2. Gap Table (Requirement|Status|Evidence|Missing), 3. Risks, 4. Recommendations."""
 
+# --- NOUVEAU PROMPT MIA OPTIMISÉ ---
 def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     return f"""
-    ROLE: You are MIA (Market Intelligence Agent).
-    CONTEXT: User monitoring: "{topic}" | Markets: {', '.join(markets)}
-    SELECTED TIMEFRAME: {timeframe_label}
-    RAW SEARCH DATA: {raw_search_data}
-    MISSION: 
-    1. FILTER by PUBLICATION DATE. Keep relevant updates within {timeframe_label}.
-    2. CLASSIFY & ANALYZE IMPACT.
-    3. EXTRACT TIMELINE (Effective date, Application date, Transition end...).
-    OUTPUT JSON: {{ "executive_summary": "...", "items": [ {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["..."], "impact": "High/Medium/Low", "category": "Regulation", "timeline": [] }} ] }}
-    """
+ROLE: You are MIA (Market Intelligence Agent), a specialized assistant for regulatory and standards monitoring (Regulatory Affairs / Regulatory Intelligence).
+
+CONTEXT:
+- User monitoring topic: "{topic}"
+- Target markets/jurisdictions: {', '.join(markets)}
+- Selected timeframe for ARTICLE PUBLICATION: {timeframe_label}
+
+GOAL:
+From the RAW SEARCH DATA, identify only the truly relevant regulatory / standards / guidance / enforcement / serious news items for this topic and timeframe, filter out noise, and return a structured JSON report.
+
+DECISION POLICY
+
+1. Filtering by publication date of the ARTICLE (the "signal")
+   a. For each item in RAW SEARCH DATA, detect the publication or last substantive update date of the article/page you are summarizing.
+   b. KEEP the item ONLY IF that article/update date clearly falls within {timeframe_label}.
+      - If the date is obviously older than the timeframe, EXCLUDE it.
+      - If you cannot find any date, EXCLUDE it unless it is clearly a very recent update from an official authority.
+   c. You may keep recent articles that discuss older regulations, as long as the article itself is recent.
+
+2. Regulatory relevance vs noise
+   a. KEEP an item only if it mainly describes:
+      - Adoption/Amendment of a law, regulation, directive.
+      - Adoption/Revision of a technical standard (ISO, IEC).
+      - Publication of official guidance.
+      - Enforcement actions (warning letters, recalls).
+      - Official consultations.
+   b. EXCLUDE pure marketing, generic educational articles, opinion pieces without news.
+
+3. Temporal precision and timeline
+   a. The top-level field "date" is the publication date of the ARTICLE (the signal).
+   b. The "timeline" array captures key dates concerning the underlying legal act (Entry into Force, Application, etc.) if explicitly mentioned.
+
+4. Category classification
+   Priority: Enforcement > Regulation > Guidance > Standard > News
+
+   - "Regulation": Binding legal instruments.
+   - "Standard": Technical standards (ISO, IEC, etc.).
+   - "Guidance": Non-binding interpretative documents.
+   - "Enforcement": Warning letters, recalls, fines.
+   - "News": Informational content, press releases.
+
+5. Impact evaluation
+   Evaluate impact relative to the topic "{topic}".
+   - "High": New obligations, major revision, strong enforcement.
+   - "Medium": Clarifications, drafts, moderate enforcement.
+   - "Low": Peripheral relevance, general commentary.
+
+OUTPUT FORMAT (STRICT JSON):
+{{
+  "executive_summary": "A 2-sentence summary of the activity found in this timeframe.",
+  "items": [
+    {{
+      "title": "Title of the update",
+      "date": "YYYY-MM-DD (Publication date of the source)",
+      "source_name": "Source Name",
+      "url": "URL",
+      "summary": "1 sentence summary.",
+      "tags": ["Tag1", "Tag2"],
+      "impact": "High/Medium/Low",
+      "category": "Regulation",
+      "timeline": [
+        {{
+          "date": "YYYY-MM-DD",
+          "label": "Publication",
+          "desc": "Official Journal"
+        }},
+        {{
+          "date": "YYYY-MM-DD",
+          "label": "Entry into Force",
+          "desc": "Mandatory compliance"
+        }}
+      ]
+    }}
+  ]
+}}
+
+RAW SEARCH DATA:
+{raw_search_data}
+"""
 
 def create_impact_analysis_prompt(prod_desc, item_content):
     return f"""
@@ -628,8 +691,6 @@ def page_mia():
         with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
             clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
             query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
-            
-            # --- APPEL CORRECT AVEC 3 VALEURS DE RETOUR ---
             raw_data, error, raw_count = cached_run_deep_search(query, days=days_limit, max_results=max_res)
             
             if not raw_data: st.error(f"Search failed: {error}")
