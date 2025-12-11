@@ -50,36 +50,7 @@ DEFAULT_APP_CONFIG = {
 }
 
 # =============================================================================
-# 1. INITIALISATION STATE
-# =============================================================================
-def init_session_state():
-    defaults = {
-        "authenticated": False,
-        "admin_authenticated": False,
-        "current_page": "Dashboard",
-        "last_olivia_report": None,
-        "last_olivia_id": None, 
-        "last_eva_report": None,
-        "last_eva_id": None,
-        "last_mia_results": None,
-        "mia_impact_results": {}, 
-        "active_analysis_id": None,
-        "editing_market_index": None,
-        "editing_domain_index": None,
-        "mia_topic_val": "",
-        "mia_markets_val": [],
-        "mia_timeframe_index": 1,
-        "current_watchlist": None,
-        "app_config": DEFAULT_APP_CONFIG.copy()
-    }
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-init_session_state()
-
-# =============================================================================
-# 2. GESTION DES DONNÉES
+# 1. GESTION DES DONNÉES (DÉPLACÉ EN PREMIER POUR L'INITIALISATION)
 # =============================================================================
 @st.cache_resource
 def get_gsheet_workbook():
@@ -102,6 +73,47 @@ def get_gsheet_workbook():
         return gc.open_by_url(st.secrets["gsheets"]["url"])
     except: return None
 
+def get_app_config():
+    """Lit la configuration depuis le GSheet (Source de Vérité)."""
+    wb = get_gsheet_workbook()
+    config_dict = DEFAULT_APP_CONFIG.copy()
+    
+    if wb:
+        try:
+            try: 
+                sheet = wb.worksheet("MIA_App_Config")
+            except:
+                # Création auto si inexistant
+                sheet = wb.add_worksheet("MIA_App_Config", 20, 2)
+                sheet.append_row(["Setting_Key", "Value"])
+                for k, v in DEFAULT_APP_CONFIG.items():
+                    sheet.append_row([k, v])
+                return config_dict
+
+            rows = sheet.get_all_values()
+            if len(rows) > 1:
+                for row in rows[1:]:
+                    if len(row) >= 2:
+                        config_dict[row[0]] = row[1]
+        except: pass
+    
+    return config_dict
+
+def update_app_config(key, value):
+    """Met à jour une clé de configuration."""
+    wb = get_gsheet_workbook()
+    if wb:
+        try:
+            sheet = wb.worksheet("MIA_App_Config")
+            cell = sheet.find(key)
+            if cell:
+                # Met à jour la valeur (colonne B = col 2)
+                sheet.update_cell(cell.row, 2, str(value))
+                st.cache_data.clear() # Force le rechargement du cache
+                return True
+        except: pass
+    return False
+
 def log_usage(report_type, report_id, details="", extra_metrics=""):
     wb = get_gsheet_workbook()
     if not wb: return
@@ -114,37 +126,41 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
         log_sheet.append_row([now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), report_id, report_type, details, extra_metrics])
     except: pass
 
-def get_app_config():
-    wb = get_gsheet_workbook()
-    config_dict = DEFAULT_APP_CONFIG.copy()
-    if wb:
-        try:
-            try: sheet = wb.worksheet("MIA_App_Config")
-            except:
-                sheet = wb.add_worksheet("MIA_App_Config", 20, 2)
-                sheet.append_row(["Setting_Key", "Value"])
-                for k, v in DEFAULT_APP_CONFIG.items(): sheet.append_row([k, v])
-                return config_dict
-            rows = sheet.get_all_values()
-            if len(rows) > 1:
-                for row in rows[1:]:
-                    if len(row) >= 2: config_dict[row[0]] = row[1]
-        except: pass
-    return config_dict
+# =============================================================================
+# 2. INITIALISATION STATE (APRES LES FONCTIONS DATA)
+# =============================================================================
+def init_session_state():
+    # 1. On charge la config depuis le Cloud AVANT tout le reste
+    if "app_config" not in st.session_state:
+        st.session_state["app_config"] = get_app_config()
 
-def update_app_config(key, value):
-    wb = get_gsheet_workbook()
-    if wb:
-        try:
-            sheet = wb.worksheet("MIA_App_Config")
-            cell = sheet.find(key)
-            if cell:
-                sheet.update_cell(cell.row, 2, str(value))
-                st.cache_data.clear()
-                return True
-        except: pass
-    return False
+    defaults = {
+        "authenticated": False,
+        "admin_authenticated": False,
+        "current_page": "Dashboard",
+        "last_olivia_report": None,
+        "last_olivia_id": None, 
+        "last_eva_report": None,
+        "last_eva_id": None,
+        "last_mia_results": None,
+        "mia_impact_results": {}, 
+        "active_analysis_id": None,
+        "editing_market_index": None,
+        "editing_domain_index": None,
+        "mia_topic_val": "",
+        "mia_markets_val": [],
+        "mia_timeframe_index": 1,
+        "current_watchlist": None,
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
 
+init_session_state()
+
+# =============================================================================
+# 3. HELPERS BDD (SUITE)
+# =============================================================================
 def get_markets():
     wb = get_gsheet_workbook()
     if wb:
@@ -284,23 +300,18 @@ def extract_text_from_pdf(b):
     except Exception as e: return str(e)
 
 # =============================================================================
-# 5. VISUALISATION (CORRECTION CRASH TYPE ERROR)
+# 5. VISUALISATION
 # =============================================================================
 def display_timeline(items):
-    """Génère la frise chronologique avec sécurité anti-crash."""
     if not items: return
-    
     timeline_data = []
     
-    # Extraction des dates avec sécurité de type
     for item in items:
-        # Sécurité : vérifier que item est bien un dictionnaire
+        # Sécurité anti-crash
         if not isinstance(item, dict): continue
         
-        # Cas 1 : Timeline détaillée extraite par l'IA
         if "timeline" in item and isinstance(item["timeline"], list) and item["timeline"]:
             for event in item["timeline"]:
-                # Sécurité : vérifier que event est bien un dictionnaire
                 if isinstance(event, dict):
                     timeline_data.append({
                         "Task": event.get("label", "Event"),
@@ -308,16 +319,6 @@ def display_timeline(items):
                         "Description": f"{item.get('title','Update')}: {event.get('desc', '')}",
                         "Source": item.get("source_name", "Web")
                     })
-                # Fallback : si l'IA a renvoyé du texte simple dans la liste
-                elif isinstance(event, str):
-                     timeline_data.append({
-                        "Task": "Event",
-                        "Date": item.get("date"), # On reprend la date de l'item parent
-                        "Description": event,
-                        "Source": item.get("source_name", "Web")
-                    })
-
-        # Cas 2 : Pas de timeline, on utilise la date de publication
         elif "date" in item:
             timeline_data.append({
                 "Task": "Publication",
@@ -509,7 +510,8 @@ def page_admin():
     # 3. SETTINGS
     with tc:
         st.markdown("#### Feature Flags")
-        app_config = st.session_state.get("app_config", get_app_config())
+        # CONFIGURATION PERSISTANTE (CHARGEE AU START)
+        app_config = st.session_state.get("app_config", DEFAULT_APP_CONFIG)
         
         curr_impact = app_config.get("enable_impact_analysis", "TRUE") == "TRUE"
         new_impact = st.toggle("⚡ Enable 'Assess Impact' Feature", value=curr_impact)
@@ -544,7 +546,7 @@ def page_admin():
 def page_mia():
     st.title("📡 MIA Watch Tower"); st.markdown("---")
     
-    app_config = st.session_state.get("app_config", get_app_config())
+    app_config = st.session_state.get("app_config", DEFAULT_APP_CONFIG)
     show_impact = app_config.get("enable_impact_analysis", "TRUE") == "TRUE"
     try: max_res = int(app_config.get("max_search_results", 5))
     except: max_res = 5
@@ -678,7 +680,7 @@ def page_mia():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # --- IMPACT ANALYSIS ---
+                # --- IMPACT ANALYSIS DYNAMIQUE ---
                 if show_impact:
                     with st.expander(f"⚡ Analyze Impact (Beta)", expanded=is_active):
                         default_context = st.session_state.get("mia_topic_val", topic) or ""
