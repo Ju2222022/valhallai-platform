@@ -50,7 +50,36 @@ DEFAULT_APP_CONFIG = {
 }
 
 # =============================================================================
-# 1. GESTION DES DONNÉES (DÉPLACÉ ICI POUR ÊTRE ACCESSIBLE AU DEMARRAGE)
+# 1. INITIALISATION STATE
+# =============================================================================
+def init_session_state():
+    defaults = {
+        "authenticated": False,
+        "admin_authenticated": False,
+        "current_page": "Dashboard",
+        "last_olivia_report": None,
+        "last_olivia_id": None, 
+        "last_eva_report": None,
+        "last_eva_id": None,
+        "last_mia_results": None,
+        "mia_impact_results": {}, 
+        "active_analysis_id": None,
+        "editing_market_index": None,
+        "editing_domain_index": None,
+        "mia_topic_val": "",
+        "mia_markets_val": [],
+        "mia_timeframe_index": 1,
+        "current_watchlist": None,
+        "app_config": DEFAULT_APP_CONFIG.copy()
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+init_session_state()
+
+# =============================================================================
+# 2. GESTION DES DONNÉES
 # =============================================================================
 @st.cache_resource
 def get_gsheet_workbook():
@@ -73,8 +102,19 @@ def get_gsheet_workbook():
         return gc.open_by_url(st.secrets["gsheets"]["url"])
     except: return None
 
+def log_usage(report_type, report_id, details="", extra_metrics=""):
+    wb = get_gsheet_workbook()
+    if not wb: return
+    try:
+        try: log_sheet = wb.worksheet("Logs")
+        except: log_sheet = wb.add_worksheet(title="Logs", rows=1000, cols=6)
+        if not log_sheet.cell(1, 1).value:
+            log_sheet.update("A1:F1", [["Date", "Time", "Report ID", "Type", "Details", "Metrics"]])
+        now = datetime.now()
+        log_sheet.append_row([now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), report_id, report_type, details, extra_metrics])
+    except: pass
+
 def get_app_config():
-    """Lit la configuration depuis le GSheet (Source de Vérité)."""
     wb = get_gsheet_workbook()
     config_dict = DEFAULT_APP_CONFIG.copy()
     if wb:
@@ -104,55 +144,6 @@ def update_app_config(key, value):
                 return True
         except: pass
     return False
-
-# =============================================================================
-# 2. INITIALISATION STATE (APRES LES FONCTIONS DATA)
-# =============================================================================
-def init_session_state():
-    defaults = {
-        "authenticated": False,
-        "admin_authenticated": False,
-        "current_page": "Dashboard",
-        "last_olivia_report": None,
-        "last_olivia_id": None, 
-        "last_eva_report": None,
-        "last_eva_id": None,
-        "last_mia_results": None,
-        "mia_impact_results": {}, 
-        "active_analysis_id": None,
-        "editing_market_index": None,
-        "editing_domain_index": None,
-        "mia_topic_val": "",
-        "mia_markets_val": [],
-        "mia_timeframe_index": 1,
-        "current_watchlist": None,
-        # CORRECTION ICI : On charge la config depuis le Sheet au démarrage
-        "app_config": None 
-    }
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-            
-    # Chargement unique au démarrage si vide
-    if st.session_state["app_config"] is None:
-        st.session_state["app_config"] = get_app_config()
-
-init_session_state()
-
-# =============================================================================
-# 3. AUTRES FONCTIONS DATA
-# =============================================================================
-def log_usage(report_type, report_id, details="", extra_metrics=""):
-    wb = get_gsheet_workbook()
-    if not wb: return
-    try:
-        try: log_sheet = wb.worksheet("Logs")
-        except: log_sheet = wb.add_worksheet(title="Logs", rows=1000, cols=6)
-        if not log_sheet.cell(1, 1).value:
-            log_sheet.update("A1:F1", [["Date", "Time", "Report ID", "Type", "Details", "Metrics"]])
-        now = datetime.now()
-        log_sheet.append_row([now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), report_id, report_type, details, extra_metrics])
-    except: pass
 
 def get_markets():
     wb = get_gsheet_workbook()
@@ -293,25 +284,45 @@ def extract_text_from_pdf(b):
     except Exception as e: return str(e)
 
 # =============================================================================
-# 5. VISUALISATION
+# 5. VISUALISATION (CORRECTION CRASH TYPE ERROR)
 # =============================================================================
 def display_timeline(items):
+    """Génère la frise chronologique avec sécurité anti-crash."""
     if not items: return
+    
     timeline_data = []
+    
+    # Extraction des dates avec sécurité de type
     for item in items:
-        if "timeline" in item and item["timeline"]:
+        # Sécurité : vérifier que item est bien un dictionnaire
+        if not isinstance(item, dict): continue
+        
+        # Cas 1 : Timeline détaillée extraite par l'IA
+        if "timeline" in item and isinstance(item["timeline"], list) and item["timeline"]:
             for event in item["timeline"]:
-                timeline_data.append({
-                    "Task": event.get("label", "Event"),
-                    "Date": event.get("date"),
-                    "Description": f"{item['title']}: {event.get('desc', '')}",
-                    "Source": item.get("source_name", "Web")
-                })
+                # Sécurité : vérifier que event est bien un dictionnaire
+                if isinstance(event, dict):
+                    timeline_data.append({
+                        "Task": event.get("label", "Event"),
+                        "Date": event.get("date"),
+                        "Description": f"{item.get('title','Update')}: {event.get('desc', '')}",
+                        "Source": item.get("source_name", "Web")
+                    })
+                # Fallback : si l'IA a renvoyé du texte simple dans la liste
+                elif isinstance(event, str):
+                     timeline_data.append({
+                        "Task": "Event",
+                        "Date": item.get("date"), # On reprend la date de l'item parent
+                        "Description": event,
+                        "Source": item.get("source_name", "Web")
+                    })
+
+        # Cas 2 : Pas de timeline, on utilise la date de publication
         elif "date" in item:
             timeline_data.append({
                 "Task": "Publication",
                 "Date": item["date"],
-                "Description": item["title"],
+                "Description": item.get("title", "Update"),
                 "Source": item.get("source_name", "Web")
             })
 
@@ -667,7 +678,7 @@ def page_mia():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # --- IMPACT ANALYSIS DYNAMIQUE ---
+                # --- IMPACT ANALYSIS ---
                 if show_impact:
                     with st.expander(f"⚡ Analyze Impact (Beta)", expanded=is_active):
                         default_context = st.session_state.get("mia_topic_val", topic) or ""
