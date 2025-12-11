@@ -34,8 +34,7 @@ if "mia" not in config.AGENTS:
         "description": "Market Intelligence Agent (Regulatory Watch & Monitoring)."
     }
 
-# Liste de démarrage (Servira uniquement à l'initialisation de la BDD)
-INITIAL_DOMAINS = [
+DEFAULT_DOMAINS = [
     "eur-lex.europa.eu", "europa.eu", "echa.europa.eu", "cenelec.eu", 
     "single-market-economy.ec.europa.eu",
     "fda.gov", "fcc.gov", "cpsc.gov", "osha.gov", "phmsa.dot.gov",
@@ -47,11 +46,41 @@ INITIAL_DOMAINS = [
 DEFAULT_APP_CONFIG = {
     "enable_impact_analysis": "TRUE",
     "cache_ttl_hours": "1",
-    "max_search_results": "5"
+    "max_search_results": "10" # Augmenté par défaut pour compenser le filtrage
 }
 
 # =============================================================================
-# 1. GESTION DES DONNÉES (RÉÉCRITE POUR SUPPRIMER LE FALLBACKFANTÔME)
+# 1. INITIALISATION STATE
+# =============================================================================
+def init_session_state():
+    defaults = {
+        "authenticated": False,
+        "admin_authenticated": False,
+        "current_page": "Dashboard",
+        "last_olivia_report": None,
+        "last_olivia_id": None, 
+        "last_eva_report": None,
+        "last_eva_id": None,
+        "last_mia_results": None,
+        "mia_impact_results": {}, 
+        "active_analysis_id": None,
+        "editing_market_index": None,
+        "editing_domain_index": None,
+        "mia_topic_val": "",
+        "mia_markets_val": [],
+        "mia_timeframe_index": 1,
+        "current_watchlist": None,
+        "app_config": DEFAULT_APP_CONFIG.copy(),
+        "mia_raw_count": 0 # Pour afficher combien de sources brutes ont été trouvées
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+init_session_state()
+
+# =============================================================================
+# 2. GESTION DES DONNÉES
 # =============================================================================
 @st.cache_resource
 def get_gsheet_workbook():
@@ -117,54 +146,12 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
         log_sheet.append_row([now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), report_id, report_type, details, extra_metrics])
     except: pass
 
-# =============================================================================
-# 2. INITIALISATION STATE
-# =============================================================================
-def init_session_state():
-    if "app_config" not in st.session_state:
-        st.session_state["app_config"] = get_app_config()
-
-    defaults = {
-        "authenticated": False,
-        "admin_authenticated": False,
-        "current_page": "Dashboard",
-        "last_olivia_report": None,
-        "last_olivia_id": None, 
-        "last_eva_report": None,
-        "last_eva_id": None,
-        "last_mia_results": None,
-        "mia_impact_results": {}, 
-        "active_analysis_id": None,
-        "editing_market_index": None,
-        "editing_domain_index": None,
-        "mia_topic_val": "",
-        "mia_markets_val": [],
-        "mia_timeframe_index": 1,
-        "current_watchlist": None,
-    }
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-init_session_state()
-
-# =============================================================================
-# 3. HELPERS BDD (CORRIGÉS : PLUS DE FALLBACK FANTÔME)
-# =============================================================================
 def get_markets():
     wb = get_gsheet_workbook()
     if wb:
-        try: 
-            vals = wb.sheet1.col_values(1)
-            # Auto-Init : Si la feuille est vide, on la remplit UNE FOIS
-            if not vals:
-                for m in config.DEFAULT_MARKETS: wb.sheet1.append_row([m])
-                return config.DEFAULT_MARKETS, True
-            return vals, True
+        try: return (wb.sheet1.col_values(1) if wb.sheet1.col_values(1) else []), True
         except: pass
-    
-    # Si pas de connexion, on renvoie VIDE (pas de faux espoirs)
-    return [], False
+    return config.DEFAULT_MARKETS, False
 
 def add_market(name):
     wb = get_gsheet_workbook()
@@ -193,18 +180,10 @@ def get_domains():
             try: sheet = wb.worksheet("Watch_domains")
             except: 
                 sheet = wb.add_worksheet("Watch_domains", 100, 1)
-                # Auto-Init des domaines
-                for d in INITIAL_DOMAINS: sheet.append_row([d])
-                return INITIAL_DOMAINS, True
-            
-            vals = sheet.col_values(1)
-            if not vals: # Si vide, on réinitialise
-                 for d in INITIAL_DOMAINS: sheet.append_row([d])
-                 return INITIAL_DOMAINS, True
-            return vals, True
+                for d in DEFAULT_DOMAINS: sheet.append_row([d])
+            return (sheet.col_values(1) if sheet.col_values(1) else DEFAULT_DOMAINS), True
         except: pass
-    # Si pas de connexion, vide.
-    return [], False
+    return DEFAULT_DOMAINS, False
 
 def add_domain(name):
     wb = get_gsheet_workbook()
@@ -274,23 +253,20 @@ def get_openai_client():
     return OpenAI(api_key=k) if k else None
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def cached_run_deep_search(query, days=None, max_results=5):
+def cached_run_deep_search(query, days=None, max_results=10):
     try:
         k = st.secrets.get("TAVILY_API_KEY")
         if not k: return None, "Key Missing"
         tavily = TavilyClient(api_key=k)
-        doms, _ = get_domains() # Si liste vide (déconnecté), la recherche sera ouverte ou échouera proprement
-        
-        params = {
-            "query": query, 
-            "search_depth": "advanced", 
-            "max_results": max_results, 
-            "include_domains": doms if doms else None # Tavily gère None comme "tout le web"
-        }
+        doms, _ = get_domains()
+        params = {"query": query, "search_depth": "advanced", "max_results": max_results, "include_domains": doms}
         if days: params["days"] = days
-        
         response = tavily.search(**params)
-        txt = "### WEB RESULTS:\n"
+        
+        # On compte les résultats bruts
+        raw_count = len(response.get('results', []))
+        
+        txt = f"### WEB RESULTS ({raw_count} FOUND):\n"
         for r in response['results']:
             txt += f"- Title: {r['title']}\n  URL: {r['url']}\n  Content: {r['content'][:800]}...\n\n"
         return txt, None
@@ -319,7 +295,6 @@ def display_timeline(items):
     if not items: return
     timeline_data = []
     for item in items:
-        # Sécurité
         if not isinstance(item, dict): continue
         if "timeline" in item and isinstance(item["timeline"], list) and item["timeline"]:
             for event in item["timeline"]:
@@ -490,7 +465,7 @@ def page_admin():
     c1.success(f"✅ DB: {wb.title}" if wb else "❌ DB Error")
     if c2.button("🔄 Refresh"): st.cache_data.clear(); st.rerun()
 
-    tm, td, tc = st.tabs(["🌍 Markets", "🕵️‍♂️ Sources", "🎛️ MIA Settings"])
+    tm, td, tc = st.tabs(["🌍 Markets", "🕵️‍♂️ MIA Sources", "🎛️ MIA Settings"])
     
     # 1. MARKETS (ALIGNE)
     with tm:
@@ -502,9 +477,11 @@ def page_admin():
         for i, m in enumerate(mkts):
             c1, c2, c3 = st.columns([4, 1, 1])
             c1.info(f"🌍 {m}")
-            if c3.button("🗑️", key=f"dm{i}"): remove_market(i); st.rerun()
+            if c3.button("🗑️", key=f"dm{i}"):
+                with st.popover("🗑️ Confirm?"):
+                    if st.button("Delete", key=f"conf_del_m_{i}"): remove_market(i); st.rerun()
     
-    # 2. SOURCES (ALIGNE)
+    # 2. SOURCES (ALIGNE + CONFIRM)
     with td:
         doms, _ = get_domains()
         st.info("💡 Deep Search Sources.")
@@ -515,7 +492,9 @@ def page_admin():
         for i, d in enumerate(doms):
             c1, c2, c3 = st.columns([4, 1, 1])
             c1.success(f"🌐 {d}")
-            if c3.button("🗑️", key=f"dd{i}"): remove_domain(i); st.rerun()
+            if c3.button("🗑️", key=f"dd{i}"):
+                with st.popover("🗑️ Confirm?"):
+                    if st.button("Delete", key=f"conf_del_d_{i}"): remove_domain(i); st.rerun()
 
     # 3. SETTINGS
     with tc:
@@ -580,9 +559,10 @@ def page_mia():
         
         if selected_wl != "-- New Watch --":
              with c_action:
-                 if st.button("🗑️ Delete", type="secondary"):
-                     wl = next((w for w in watchlists if w["name"] == selected_wl), None)
-                     if wl and delete_watchlist(wl["id"]): st.success("Deleted."); st.cache_data.clear(); st.rerun()
+                 with st.popover("🗑️ Delete"):
+                     if st.button("Confirm Delete"):
+                         wl = next((w for w in watchlists if w["name"] == selected_wl), None)
+                         if wl and delete_watchlist(wl["id"]): st.success("Deleted."); st.cache_data.clear(); st.rerun()
 
     markets, _ = get_markets()
     col1, col2, col3 = st.columns([2, 2, 1], gap="large")
@@ -615,9 +595,15 @@ def page_mia():
         with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
             clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
             query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
+            # Extraction du nombre de résultats bruts pour info
             raw_data, error = cached_run_deep_search(query, days=days_limit, max_results=max_res)
+            
             if not raw_data: st.error(f"Search failed: {error}")
             else:
+                # On compte les occurrences de "- Title:" pour estimer le nombre de sources
+                raw_count = raw_data.count("- Title:")
+                st.session_state["mia_raw_count"] = raw_count
+                
                 prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
                 json_str = cached_ai_generation(prompt, config.OPENAI_MODEL, 0.1, json_mode=True)
                 try:
@@ -635,6 +621,12 @@ def page_mia():
     results = st.session_state.get("last_mia_results")
     if results:
         st.markdown("### 📋 Monitoring Report")
+        
+        # --- NOUVEAU : METRIQUE DISCRETE ---
+        raw_c = st.session_state.get("mia_raw_count", 0)
+        kept_c = len(results.get("items", []))
+        st.caption(f"🔍 AI Filter: Scanned {raw_c} raw sources → Kept {kept_c} relevant updates.")
+        # -----------------------------------
         
         if results.get("items"):
             with st.expander("📅 View Strategic Timeline", expanded=False):
