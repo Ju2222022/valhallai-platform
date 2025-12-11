@@ -18,7 +18,7 @@ import config
 from utils_pdf import generate_pdf_report
 
 # =============================================================================
-# 0. CONFIGURATION
+# 0. CONFIGURATION GLOBALE
 # =============================================================================
 st.set_page_config(
     page_title=config.APP_NAME,
@@ -46,41 +46,11 @@ DEFAULT_DOMAINS = [
 DEFAULT_APP_CONFIG = {
     "enable_impact_analysis": "TRUE",
     "cache_ttl_hours": "1",
-    "max_search_results": "10" # Augmenté par défaut pour compenser le filtrage
+    "max_search_results": "5"
 }
 
 # =============================================================================
-# 1. INITIALISATION STATE
-# =============================================================================
-def init_session_state():
-    defaults = {
-        "authenticated": False,
-        "admin_authenticated": False,
-        "current_page": "Dashboard",
-        "last_olivia_report": None,
-        "last_olivia_id": None, 
-        "last_eva_report": None,
-        "last_eva_id": None,
-        "last_mia_results": None,
-        "mia_impact_results": {}, 
-        "active_analysis_id": None,
-        "editing_market_index": None,
-        "editing_domain_index": None,
-        "mia_topic_val": "",
-        "mia_markets_val": [],
-        "mia_timeframe_index": 1,
-        "current_watchlist": None,
-        "app_config": DEFAULT_APP_CONFIG.copy(),
-        "mia_raw_count": 0 # Pour afficher combien de sources brutes ont été trouvées
-    }
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-init_session_state()
-
-# =============================================================================
-# 2. GESTION DES DONNÉES
+# 1. GESTION DES DONNÉES (DÉPLACÉ EN TÊTE POUR INITIALISATION)
 # =============================================================================
 @st.cache_resource
 def get_gsheet_workbook():
@@ -104,21 +74,29 @@ def get_gsheet_workbook():
     except: return None
 
 def get_app_config():
+    """Lit la configuration depuis le GSheet (Source de Vérité)."""
     wb = get_gsheet_workbook()
     config_dict = DEFAULT_APP_CONFIG.copy()
+    
     if wb:
         try:
-            try: sheet = wb.worksheet("MIA_App_Config")
+            try: 
+                sheet = wb.worksheet("MIA_App_Config")
             except:
+                # Création auto si inexistant
                 sheet = wb.add_worksheet("MIA_App_Config", 20, 2)
                 sheet.append_row(["Setting_Key", "Value"])
-                for k, v in DEFAULT_APP_CONFIG.items(): sheet.append_row([k, v])
+                for k, v in DEFAULT_APP_CONFIG.items():
+                    sheet.append_row([k, v])
                 return config_dict
+
             rows = sheet.get_all_values()
             if len(rows) > 1:
                 for row in rows[1:]:
-                    if len(row) >= 2: config_dict[row[0]] = row[1]
+                    if len(row) >= 2:
+                        config_dict[row[0]] = row[1]
         except: pass
+    
     return config_dict
 
 def update_app_config(key, value):
@@ -129,7 +107,7 @@ def update_app_config(key, value):
             cell = sheet.find(key)
             if cell:
                 sheet.update_cell(cell.row, 2, str(value))
-                st.cache_data.clear()
+                st.cache_data.clear() # Reset cache pour prise en compte immédiate (si applicable)
                 return True
         except: pass
     return False
@@ -149,9 +127,14 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
 def get_markets():
     wb = get_gsheet_workbook()
     if wb:
-        try: return (wb.sheet1.col_values(1) if wb.sheet1.col_values(1) else []), True
+        try: 
+            vals = wb.sheet1.col_values(1)
+            if not vals:
+                 for m in config.DEFAULT_MARKETS: wb.sheet1.append_row([m])
+                 return config.DEFAULT_MARKETS, True
+            return vals, True
         except: pass
-    return config.DEFAULT_MARKETS, False
+    return [], False
 
 def add_market(name):
     wb = get_gsheet_workbook()
@@ -167,12 +150,6 @@ def remove_market(idx):
         try: wb.sheet1.delete_rows(idx + 1); st.cache_data.clear()
         except: pass
 
-def update_market(idx, name):
-    wb = get_gsheet_workbook()
-    if wb:
-        try: wb.sheet1.update_cell(idx + 1, 1, name); st.cache_data.clear()
-        except: pass
-
 def get_domains():
     wb = get_gsheet_workbook()
     if wb:
@@ -181,9 +158,15 @@ def get_domains():
             except: 
                 sheet = wb.add_worksheet("Watch_domains", 100, 1)
                 for d in DEFAULT_DOMAINS: sheet.append_row([d])
-            return (sheet.col_values(1) if sheet.col_values(1) else DEFAULT_DOMAINS), True
+                return DEFAULT_DOMAINS, True
+            
+            vals = sheet.col_values(1)
+            if not vals:
+                 for d in DEFAULT_DOMAINS: sheet.append_row([d])
+                 return DEFAULT_DOMAINS, True
+            return vals, True
         except: pass
-    return DEFAULT_DOMAINS, False
+    return [], False
 
 def add_domain(name):
     wb = get_gsheet_workbook()
@@ -198,12 +181,6 @@ def remove_domain(idx):
     wb = get_gsheet_workbook()
     if wb:
         try: wb.worksheet("Watch_domains").delete_rows(idx + 1); st.cache_data.clear()
-        except: pass
-
-def update_domain(idx, name):
-    wb = get_gsheet_workbook()
-    if wb:
-        try: wb.worksheet("Watch_domains").update_cell(idx + 1, 1, name); st.cache_data.clear()
         except: pass
 
 def get_watchlists():
@@ -245,6 +222,39 @@ def delete_watchlist(watchlist_id):
     return False
 
 # =============================================================================
+# 2. INITIALISATION SESSION STATE (APRÈS LES FONCTIONS DATA)
+# =============================================================================
+def init_session_state():
+    # CHARGEMENT DE LA CONFIG AVANT TOUT
+    # Cela garantit que la session contient les valeurs du Cloud, pas les défauts
+    if "app_config" not in st.session_state:
+        st.session_state["app_config"] = get_app_config()
+
+    defaults = {
+        "authenticated": False,
+        "admin_authenticated": False,
+        "current_page": "Dashboard",
+        "last_olivia_report": None,
+        "last_olivia_id": None, 
+        "last_eva_report": None,
+        "last_eva_id": None,
+        "last_mia_results": None,
+        "mia_impact_results": {}, 
+        "active_analysis_id": None,
+        "editing_market_index": None,
+        "editing_domain_index": None,
+        "mia_topic_val": "",
+        "mia_markets_val": [],
+        "mia_timeframe_index": 1,
+        "current_watchlist": None,
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+init_session_state()
+
+# =============================================================================
 # 4. API & SEARCH & CACHING
 # =============================================================================
 def get_api_key(): return st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -253,7 +263,7 @@ def get_openai_client():
     return OpenAI(api_key=k) if k else None
 
 @st.cache_data(show_spinner=False, ttl=3600)
-def cached_run_deep_search(query, days=None, max_results=10):
+def cached_run_deep_search(query, days=None, max_results=5):
     try:
         k = st.secrets.get("TAVILY_API_KEY")
         if not k: return None, "Key Missing"
@@ -262,11 +272,7 @@ def cached_run_deep_search(query, days=None, max_results=10):
         params = {"query": query, "search_depth": "advanced", "max_results": max_results, "include_domains": doms}
         if days: params["days"] = days
         response = tavily.search(**params)
-        
-        # On compte les résultats bruts
-        raw_count = len(response.get('results', []))
-        
-        txt = f"### WEB RESULTS ({raw_count} FOUND):\n"
+        txt = "### WEB RESULTS:\n"
         for r in response['results']:
             txt += f"- Title: {r['title']}\n  URL: {r['url']}\n  Content: {r['content'][:800]}...\n\n"
         return txt, None
@@ -337,7 +343,6 @@ def display_timeline(items):
     
     start_view = now - timedelta(days=365)
     end_view = now + timedelta(days=730)
-    
     fig.update_xaxes(range=[start_view, end_view], showgrid=True, gridcolor="#eee", zeroline=False)
     fig.update_yaxes(visible=False, showticklabels=False)
     fig.add_vline(x=now.timestamp() * 1000, line_width=2, line_dash="dot", line_color="#295A63", annotation_text="Today")
@@ -467,7 +472,6 @@ def page_admin():
 
     tm, td, tc = st.tabs(["🌍 Markets", "🕵️‍♂️ MIA Sources", "🎛️ MIA Settings"])
     
-    # 1. MARKETS (ALIGNE)
     with tm:
         mkts, _ = get_markets()
         with st.form("add_m"):
@@ -477,11 +481,11 @@ def page_admin():
         for i, m in enumerate(mkts):
             c1, c2, c3 = st.columns([4, 1, 1])
             c1.info(f"🌍 {m}")
-            if c3.button("🗑️", key=f"dm{i}"):
-                with st.popover("🗑️ Confirm?"):
-                    if st.button("Delete", key=f"conf_del_m_{i}"): remove_market(i); st.rerun()
+            # POP-OVER DE SUPPRESSION (Correction UX)
+            with c3.popover("🗑️", help="Delete"):
+                st.write(f"Delete {m}?")
+                if st.button("Confirm", key=f"conf_del_m_{i}"): remove_market(i); st.rerun()
     
-    # 2. SOURCES (ALIGNE + CONFIRM)
     with td:
         doms, _ = get_domains()
         st.info("💡 Deep Search Sources.")
@@ -492,18 +496,17 @@ def page_admin():
         for i, d in enumerate(doms):
             c1, c2, c3 = st.columns([4, 1, 1])
             c1.success(f"🌐 {d}")
-            if c3.button("🗑️", key=f"dd{i}"):
-                with st.popover("🗑️ Confirm?"):
-                    if st.button("Delete", key=f"conf_del_d_{i}"): remove_domain(i); st.rerun()
+            # POP-OVER DE SUPPRESSION (Correction UX)
+            with c3.popover("🗑️", help="Delete"):
+                st.write(f"Delete {d}?")
+                if st.button("Confirm", key=f"conf_del_d_{i}"): remove_domain(i); st.rerun()
 
-    # 3. SETTINGS
     with tc:
         st.markdown("#### Feature Flags")
         app_config = st.session_state.get("app_config", get_app_config())
         
         curr_impact = app_config.get("enable_impact_analysis", "TRUE") == "TRUE"
         new_impact = st.toggle("⚡ Enable 'Assess Impact' Feature", value=curr_impact)
-        
         if new_impact != curr_impact:
             val = "TRUE" if new_impact else "FALSE"
             update_app_config("enable_impact_analysis", val)
@@ -521,8 +524,7 @@ def page_admin():
                 update_app_config("max_search_results", new_max)
                 st.session_state["app_config"]["max_search_results"] = new_max
                 st.success("✅ Updated! Effective immediately.")
-            else:
-                st.error("Enter a number between 1 and 100.")
+            else: st.error("Enter a number between 1 and 100.")
         
         curr_ttl = app_config.get("cache_ttl_hours", "1")
         new_ttl = st.text_input("Cache Duration (Hours)", value=curr_ttl)
@@ -559,10 +561,15 @@ def page_mia():
         
         if selected_wl != "-- New Watch --":
              with c_action:
+                 # POP-OVER DE SUPPRESSION (Correction UX)
                  with st.popover("🗑️ Delete"):
+                     st.write(f"Delete '{selected_wl}'?")
                      if st.button("Confirm Delete"):
                          wl = next((w for w in watchlists if w["name"] == selected_wl), None)
-                         if wl and delete_watchlist(wl["id"]): st.success("Deleted."); st.cache_data.clear(); st.rerun()
+                         if wl and delete_watchlist(wl["id"]): 
+                             st.success("Deleted.")
+                             st.cache_data.clear()
+                             st.rerun()
 
     markets, _ = get_markets()
     col1, col2, col3 = st.columns([2, 2, 1], gap="large")
@@ -590,17 +597,19 @@ def page_mia():
                         save_watchlist(new_wl_name, topic, selected_markets, selected_label)
                         st.toast("Saved!", icon="💾")
                         st.cache_data.clear()
+                        
+        # INFO METRIQUE DISCRETE
+        if launch: st.session_state["mia_raw_count"] = 0 # Reset compteur
 
     if launch and topic:
         with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
             clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
             query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
-            # Extraction du nombre de résultats bruts pour info
             raw_data, error = cached_run_deep_search(query, days=days_limit, max_results=max_res)
             
             if not raw_data: st.error(f"Search failed: {error}")
             else:
-                # On compte les occurrences de "- Title:" pour estimer le nombre de sources
+                # Calcul métrique transparence
                 raw_count = raw_data.count("- Title:")
                 st.session_state["mia_raw_count"] = raw_count
                 
@@ -622,12 +631,11 @@ def page_mia():
     if results:
         st.markdown("### 📋 Monitoring Report")
         
-        # --- NOUVEAU : METRIQUE DISCRETE ---
+        # Info métrique transparence
         raw_c = st.session_state.get("mia_raw_count", 0)
         kept_c = len(results.get("items", []))
-        st.caption(f"🔍 AI Filter: Scanned {raw_c} raw sources → Kept {kept_c} relevant updates.")
-        # -----------------------------------
-        
+        st.caption(f"🔍 MIA Intelligence: Analyzed {raw_c} sources • Filtered down to {kept_c} relevant items.")
+
         if results.get("items"):
             with st.expander("📅 View Strategic Timeline", expanded=False):
                 display_timeline(results["items"])
@@ -681,7 +689,6 @@ def page_mia():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # --- IMPACT ANALYSIS DYNAMIQUE ---
                 if show_impact:
                     with st.expander(f"⚡ Analyze Impact (Beta)", expanded=is_active):
                         default_context = st.session_state.get("mia_topic_val", topic) or ""
