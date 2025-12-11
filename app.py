@@ -307,7 +307,6 @@ def display_timeline(items):
             })
 
     if not timeline_data: return
-
     df = pd.DataFrame(timeline_data)
     df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
     df = df.dropna(subset=["Date"])
@@ -440,6 +439,7 @@ def apply_theme():
         text-align: justify; line-height: 1.6; color: #2c3e50;
         background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #295A63;
     }
+    
     .mia-link a { color: #295A63 !important; text-decoration: none; font-weight: 700; font-size: 1.1em; border-bottom: 2px solid #C8A951; }
     .mia-link a:hover { color: #C8A951 !important; background-color: #f0f0f0; }
     </style>
@@ -460,32 +460,26 @@ def page_admin():
 
     tm, td, tc = st.tabs(["🌍 Markets", "🕵️‍♂️ MIA Sources", "🎛️ MIA Settings"])
     
-    # 1. MARKETS
+    # 1. MARKETS (FIXED ALIGNMENT)
     with tm:
         mkts, _ = get_markets()
         with st.form("add_m"):
-            c1, c2 = st.columns([4,1]) # AJUSTEMENT RATIO
+            c1, c2 = st.columns([4,1], vertical_alignment="bottom")
             new = c1.text_input("Name", placeholder="e.g. India")
-            # AJUSTEMENT ALIGNEMENT
-            c2.write(""); c2.write("") 
             if c2.form_submit_button("Add", use_container_width=True) and new: add_market(new); st.rerun()
-        
         for i, m in enumerate(mkts):
             c1, c2, c3 = st.columns([4, 1, 1])
             c1.info(f"🌍 {m}")
             if c3.button("🗑️", key=f"dm{i}"): remove_market(i); st.rerun()
     
-    # 2. SOURCES (UI FIX)
+    # 2. SOURCES (FIXED ALIGNMENT)
     with td:
         doms, _ = get_domains()
         st.info("💡 Deep Search Sources.")
         with st.form("add_d"):
-            c1, c2 = st.columns([4,1]) # AJUSTEMENT RATIO
+            c1, c2 = st.columns([4,1], vertical_alignment="bottom")
             new = c1.text_input("Domain", placeholder="e.g. ansm.sante.fr")
-            # AJUSTEMENT ALIGNEMENT POUR S'ALIGNER AVEC INPUT
-            c2.write(""); c2.write("")
             if c2.form_submit_button("Add", use_container_width=True) and new: add_domain(new); st.rerun()
-            
         for i, d in enumerate(doms):
             c1, c2, c3 = st.columns([4, 1, 1])
             c1.success(f"🌐 {d}")
