@@ -46,41 +46,11 @@ DEFAULT_DOMAINS = [
 DEFAULT_APP_CONFIG = {
     "enable_impact_analysis": "TRUE",
     "cache_ttl_hours": "1",
-    "max_search_results": "10"
+    "max_search_results": "5"
 }
 
 # =============================================================================
-# 1. INITIALISATION STATE
-# =============================================================================
-def init_session_state():
-    defaults = {
-        "authenticated": False,
-        "admin_authenticated": False,
-        "current_page": "Dashboard",
-        "last_olivia_report": None,
-        "last_olivia_id": None, 
-        "last_eva_report": None,
-        "last_eva_id": None,
-        "last_mia_results": None,
-        "mia_impact_results": {}, 
-        "active_analysis_id": None,
-        "editing_market_index": None,
-        "editing_domain_index": None,
-        "mia_topic_val": "",
-        "mia_markets_val": [],
-        "mia_timeframe_index": 1,
-        "current_watchlist": None,
-        "app_config": DEFAULT_APP_CONFIG.copy(),
-        "mia_raw_count": 0 
-    }
-    for key, value in defaults.items():
-        if key not in st.session_state:
-            st.session_state[key] = value
-
-init_session_state()
-
-# =============================================================================
-# 2. GESTION DES DONNÉES
+# 1. GESTION DES DONNÉES (CRITIQUE : DÉPLACÉ EN TÊTE)
 # =============================================================================
 @st.cache_resource
 def get_gsheet_workbook():
@@ -101,24 +71,40 @@ def get_gsheet_workbook():
         }
         gc = gspread.service_account_from_dict(creds_dict)
         return gc.open_by_url(st.secrets["gsheets"]["url"])
-    except: return None
+    except Exception as e: 
+        print(f"DB Error: {e}")
+        return None
 
 def get_app_config():
+    """Lit la configuration depuis le GSheet avec nettoyage des clés."""
     wb = get_gsheet_workbook()
     config_dict = DEFAULT_APP_CONFIG.copy()
+    
     if wb:
         try:
-            try: sheet = wb.worksheet("MIA_App_Config")
+            try: 
+                sheet = wb.worksheet("MIA_App_Config")
             except:
+                # Création auto si inexistant
                 sheet = wb.add_worksheet("MIA_App_Config", 20, 2)
                 sheet.append_row(["Setting_Key", "Value"])
-                for k, v in DEFAULT_APP_CONFIG.items(): sheet.append_row([k, v])
+                for k, v in DEFAULT_APP_CONFIG.items():
+                    sheet.append_row([k, v])
                 return config_dict
+
             rows = sheet.get_all_values()
             if len(rows) > 1:
                 for row in rows[1:]:
-                    if len(row) >= 2: config_dict[row[0]] = row[1]
-        except: pass
+                    if len(row) >= 2:
+                        # CRITIQUE : .strip() pour éviter les erreurs d'espaces
+                        key = str(row[0]).strip()
+                        val = str(row[1]).strip()
+                        if key in config_dict:
+                            config_dict[key] = val
+        except Exception as e: 
+            print(f"Config Read Error: {e}")
+            pass
+    
     return config_dict
 
 def update_app_config(key, value):
@@ -146,12 +132,18 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
         log_sheet.append_row([now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), report_id, report_type, details, extra_metrics])
     except: pass
 
+# --- HELPERS BDD ---
 def get_markets():
     wb = get_gsheet_workbook()
     if wb:
-        try: return (wb.sheet1.col_values(1) if wb.sheet1.col_values(1) else []), True
+        try: 
+            vals = wb.sheet1.col_values(1)
+            if not vals:
+                 for m in config.DEFAULT_MARKETS: wb.sheet1.append_row([m])
+                 return config.DEFAULT_MARKETS, True
+            return vals, True
         except: pass
-    return config.DEFAULT_MARKETS, False
+    return [], False
 
 def add_market(name):
     wb = get_gsheet_workbook()
@@ -181,9 +173,15 @@ def get_domains():
             except: 
                 sheet = wb.add_worksheet("Watch_domains", 100, 1)
                 for d in DEFAULT_DOMAINS: sheet.append_row([d])
-            return (sheet.col_values(1) if sheet.col_values(1) else DEFAULT_DOMAINS), True
+                return DEFAULT_DOMAINS, True
+            
+            vals = sheet.col_values(1)
+            if not vals:
+                 for d in DEFAULT_DOMAINS: sheet.append_row([d])
+                 return DEFAULT_DOMAINS, True
+            return vals, True
         except: pass
-    return DEFAULT_DOMAINS, False
+    return [], False
 
 def add_domain(name):
     wb = get_gsheet_workbook()
@@ -245,6 +243,39 @@ def delete_watchlist(watchlist_id):
     return False
 
 # =============================================================================
+# 2. INITIALISATION SESSION STATE (APRES FONCTIONS DATA)
+# =============================================================================
+def init_session_state():
+    # CHARGEMENT CONFIG AU DEMARRAGE
+    if "app_config" not in st.session_state:
+        st.session_state["app_config"] = get_app_config()
+
+    defaults = {
+        "authenticated": False,
+        "admin_authenticated": False,
+        "current_page": "Dashboard",
+        "last_olivia_report": None,
+        "last_olivia_id": None, 
+        "last_eva_report": None,
+        "last_eva_id": None,
+        "last_mia_results": None,
+        "mia_impact_results": {}, 
+        "active_analysis_id": None,
+        "editing_market_index": None,
+        "editing_domain_index": None,
+        "mia_topic_val": "",
+        "mia_markets_val": [],
+        "mia_timeframe_index": 1,
+        "current_watchlist": None,
+        "mia_raw_count": 0
+    }
+    for key, value in defaults.items():
+        if key not in st.session_state:
+            st.session_state[key] = value
+
+init_session_state()
+
+# =============================================================================
 # 4. API & SEARCH & CACHING
 # =============================================================================
 def get_api_key(): return st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
@@ -262,15 +293,11 @@ def cached_run_deep_search(query, days=None, max_results=5):
         params = {"query": query, "search_depth": "advanced", "max_results": max_results, "include_domains": doms}
         if days: params["days"] = days
         response = tavily.search(**params)
-        
-        # Calcul du nombre de résultats bruts pour l'affichage
-        raw_count = len(response.get('results', []))
-        
-        txt = f"### WEB RESULTS ({raw_count} FOUND):\n"
+        txt = "### WEB RESULTS:\n"
         for r in response['results']:
             txt += f"- Title: {r['title']}\n  URL: {r['url']}\n  Content: {r['content'][:800]}...\n\n"
-        return txt, None, raw_count # On retourne aussi le compteur
-    except Exception as e: return None, str(e), 0
+        return txt, None
+    except Exception as e: return None, str(e)
 
 @st.cache_data(show_spinner=False)
 def cached_ai_generation(prompt, model, temp, json_mode=False):
@@ -296,7 +323,6 @@ def display_timeline(items):
     timeline_data = []
     for item in items:
         if not isinstance(item, dict): continue
-        # Cas 1 : Timeline détaillée
         if "timeline" in item and isinstance(item["timeline"], list) and item["timeline"]:
             for event in item["timeline"]:
                 if isinstance(event, dict):
@@ -306,7 +332,6 @@ def display_timeline(items):
                         "Description": f"{item.get('title','Update')}: {event.get('desc', '')}",
                         "Source": item.get("source_name", "Web")
                     })
-        # Cas 2 : Date de publication simple
         elif "date" in item:
             timeline_data.append({
                 "Task": "Publication",
@@ -316,17 +341,10 @@ def display_timeline(items):
             })
 
     if not timeline_data: return
-
     df = pd.DataFrame(timeline_data)
-    # Correction : Forcer le parsing de date intelligent
-    df["Date"] = pd.to_datetime(df["Date"], errors='coerce', utc=True) 
-    # UTC=True pour uniformiser les timezones et éviter les erreurs de comparaison
-    
+    df["Date"] = pd.to_datetime(df["Date"], errors='coerce')
     df = df.dropna(subset=["Date"])
     if df.empty: return
-
-    # Conversion en datetime 'naive' pour éviter conflit timezone avec datetime.now()
-    df["Date"] = df["Date"].dt.tz_localize(None)
 
     now = datetime.now()
     def get_color(d):
@@ -346,7 +364,6 @@ def display_timeline(items):
     
     start_view = now - timedelta(days=365)
     end_view = now + timedelta(days=730)
-    
     fig.update_xaxes(range=[start_view, end_view], showgrid=True, gridcolor="#eee", zeroline=False)
     fig.update_yaxes(visible=False, showticklabels=False)
     fig.add_vline(x=now.timestamp() * 1000, line_width=2, line_dash="dot", line_color="#295A63", annotation_text="Today")
@@ -392,49 +409,17 @@ def create_eva_prompt(ctx, doc):
     Mission: Compliance Audit. Output: Strict English Markdown.
     Structure: 1. Verdict, 2. Gap Table (Requirement|Status|Evidence|Missing), 3. Risks, 4. Recommendations."""
 
-# --- PROMPT MIA PERMISSIF (VERSION LARGE FILET) ---
 def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     return f"""
     ROLE: You are MIA (Market Intelligence Agent).
     CONTEXT: User monitoring: "{topic}" | Markets: {', '.join(markets)}
     SELECTED TIMEFRAME: {timeframe_label}
     RAW SEARCH DATA: {raw_search_data}
-    
-    MISSION:
-    1. FILTER by PUBLICATION DATE (The "Signal"): 
-       - Keep ANY item where the ARTICLE/UPDATE was published within {timeframe_label}.
-       - BE PERMISSIVE: If the date matches and the topic is relevant (even loosely), KEEP IT.
-       - INCLUDE: News, Opinion pieces, Reminders, Summaries of old laws (if published recently).
-       - DO NOT DISCARD items just because they discuss an old regulation. The "signal" is the recent article itself.
-       
-    2. Analyze Impact (High/Medium/Low) based on the relevance to the user's topic.
-    
-    3. CLASSIFY each item into:
-       - "Regulation" (Official laws)
-       - "Standard" (Technical norms)
-       - "Guidance" (Interpretations)
-       - "Enforcement" (Warning letters, recalls)
-       - "News" (Articles, press releases, analysis, blog posts)
-    
-    OUTPUT FORMAT (Strict JSON):
-    {{
-        "executive_summary": "A 2-sentence summary of the activity found in this timeframe.",
-        "items": [
-            {{ 
-                "title": "...", 
-                "date": "YYYY-MM-DD (Publication date of the source)", 
-                "source_name": "...", 
-                "url": "...", 
-                "summary": "...", 
-                "tags": ["Tag1"], 
-                "impact": "High/Medium/Low",
-                "category": "Regulation" (or Standard, Guidance, Enforcement, News),
-                "timeline": [
-                    {{"date": "YYYY-MM-DD", "label": "Publication", "desc": "Article published"}}
-                ]
-            }}
-        ]
-    }}
+    MISSION: 
+    1. FILTER by PUBLICATION DATE. Keep relevant updates within {timeframe_label}.
+    2. CLASSIFY & ANALYZE IMPACT.
+    3. EXTRACT TIMELINE (Effective date, Application date, Transition end...).
+    OUTPUT JSON: {{ "executive_summary": "...", "items": [ {{ "title": "...", "date": "YYYY-MM-DD", "source_name": "...", "url": "...", "summary": "...", "tags": ["..."], "impact": "High/Medium/Low", "category": "Regulation", "timeline": [] }} ] }}
     """
 
 def create_impact_analysis_prompt(prod_desc, item_content):
@@ -487,7 +472,6 @@ def apply_theme():
         text-align: justify; line-height: 1.6; color: #2c3e50;
         background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #295A63;
     }
-    
     .mia-link a { color: #295A63 !important; text-decoration: none; font-weight: 700; font-size: 1.1em; border-bottom: 2px solid #C8A951; }
     .mia-link a:hover { color: #C8A951 !important; background-color: #f0f0f0; }
     </style>
@@ -554,15 +538,15 @@ def page_admin():
         st.markdown("---")
         st.markdown("#### Performance")
         
+        # Max Results
         curr_max = app_config.get("max_search_results", "5")
-        new_max = st.text_input("Max Tavily Results (1-500)", value=curr_max)
+        new_max = st.text_input("Max Tavily Results (1-100)", value=curr_max)
         if st.button("Update Max Results"):
-            if new_max.isdigit() and 1 <= int(new_max) <= 500:
+            if new_max.isdigit() and 1 <= int(new_max) <= 100:
                 update_app_config("max_search_results", new_max)
                 st.session_state["app_config"]["max_search_results"] = new_max
                 st.success("✅ Updated! Effective immediately.")
-            else:
-                st.error("Enter a number between 1 and 500.")
+            else: st.error("Enter a number between 1 and 100.")
         
         curr_ttl = app_config.get("cache_ttl_hours", "1")
         new_ttl = st.text_input("Cache Duration (Hours)", value=curr_ttl)
@@ -640,7 +624,6 @@ def page_mia():
             if not raw_data: st.error(f"Search failed: {error}")
             else:
                 st.session_state["mia_raw_count"] = raw_count
-                
                 prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
                 json_str = cached_ai_generation(prompt, config.OPENAI_MODEL, 0.1, json_mode=True)
                 try:
@@ -659,7 +642,6 @@ def page_mia():
     if results:
         st.markdown("### 📋 Monitoring Report")
         
-        # Info métrique
         raw_c = st.session_state.get("mia_raw_count", 0)
         kept_c = len(results.get("items", []))
         st.caption(f"🔍 MIA Intelligence: Analyzed {raw_c} sources → Kept {kept_c} relevant updates.")
@@ -717,7 +699,6 @@ def page_mia():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # --- IMPACT ANALYSIS DYNAMIQUE ---
                 if show_impact:
                     with st.expander(f"⚡ Analyze Impact (Beta)", expanded=is_active):
                         default_context = st.session_state.get("mia_topic_val", topic) or ""
