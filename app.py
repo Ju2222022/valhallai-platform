@@ -499,7 +499,7 @@ def create_impact_analysis_prompt(prod_desc, item_content):
     **Potential Technical Impacts:** Design/Labeling/Testing.
     **Recommended Next Steps:** Concrete actions.
     ---
-    *⚠️ Note: This analysis is for informational purposes and requires verification by a qualified RA professional.*
+    *⚠️ Note: This analysis is for informational purposes and requires verification.*
     """
 
 def get_logo_html(size=50):
