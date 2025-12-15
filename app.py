@@ -301,7 +301,6 @@ def extract_pdf_content_by_density(pdf_bytes, keywords, window_size=500):
         return best_window_text.strip() if best_window_text else full_text[:3000]
     except: return "PDF Error"
 
-# --- MODIF V46.1 : GESTION DES ERREURS GOOGLE ---
 async def async_google_search(query, domains, max_results, date_restrict=None):
     api_key, cx = get_google_search_keys()
     if not api_key or not cx: return {"items": []}, "Google Search Keys Missing"
@@ -338,18 +337,13 @@ async def async_google_search(query, domains, max_results, date_restrict=None):
                     elif response.status == 403:
                         fatal_error = "Google Permission Denied (403)"
                         return []
-                    elif response.status == 400:
-                        # Souvent requête mal formée
-                        return []
                     return []
             except Exception as e:
                 return []
 
         results_lists = await asyncio.gather(*[fetch_task(p) for p in tasks])
         
-        # SI ERREUR FATALE (QUOTA), ON ARRÊTE TOUT
-        if fatal_error:
-            return {"items": []}, fatal_error
+        if fatal_error: return {"items": []}, fatal_error
 
         for r_list in results_lists: all_items.extend(r_list)
 
@@ -403,7 +397,6 @@ def cached_async_mia_deep_search(query, date_restrict_code, max_results):
         async def run_pipeline():
             google_json, error = await async_google_search(query, doms, max_results, date_restrict=date_restrict_code)
             
-            # REMONTÉE ERREUR CRITIQUE GOOGLE
             if error: return [], 0, error
             
             items = google_json.get('items', [])
@@ -721,13 +714,11 @@ def page_mia():
             
             raw_data, error, raw_count = cached_async_mia_deep_search(query, date_restrict_code, max_res)
             
-            if not raw_data and error: 
-                # ERREUR FATALE (QUOTA)
+            if not raw_data and error:
                 st.error(f"🛑 Critical Search Error: {error}")
             elif not raw_data:
                 st.error("Unknown error.")
             else:
-                # 0 RÉSULTATS (Pas de quota mais pas de résultats)
                 if raw_count == 0:
                     st.warning(f"⚠️ No relevant updates found for '{topic}' in the selected timeframe ({selected_label}).")
                     st.stop()
@@ -817,6 +808,95 @@ def page_mia():
                         if safe_id in st.session_state["mia_impact_results"]:
                             st.markdown("---")
                             st.markdown(st.session_state["mia_impact_results"][safe_id])
+
+def page_olivia():
+    st.title("🤖 OlivIA Workspace")
+    markets, _ = get_markets()
+    c1, c2 = st.columns([2, 1])
+    with c1: 
+        desc = st.text_area("Product Definition", height=200, key="oli_desc")
+        uploads = st.file_uploader("📎 Attach Product Specs / Brief / Images (Optional)", type=['pdf', 'png', 'jpg', 'jpeg'], accept_multiple_files=True, key="oli_uploads")
+    with c2: 
+        safe_default = [markets[0]] if markets else []
+        ctrys = st.multiselect("Target Markets", markets, default=safe_default, key="oli_mkts")
+        st.write(""); gen = st.button("Generate Report", type="primary", key="oli_btn")
+    
+    if gen and desc:
+        with st.spinner("Analyzing (Multimodal)..."):
+            try:
+                pdf_context = ""
+                images_payload = []
+                if uploads:
+                    for up_file in uploads:
+                        if up_file.type == "application/pdf":
+                            txt = extract_text_from_pdf(up_file.read())
+                            pdf_context += f"\n--- CONTENT OF {up_file.name} ---\n{txt[:8000]}\n"
+                        elif up_file.type in ["image/png", "image/jpeg", "image/jpg"]:
+                            b64_img = base64.b64encode(up_file.getvalue()).decode('utf-8')
+                            images_payload.append(b64_img)
+
+                use_ds = any(x in str(ctrys) for x in ["EU","USA","China"])
+                ext_ctx = ""
+                if use_ds: 
+                    d, error, _ = cached_async_mia_deep_search(f"Regulations for {desc} in {ctrys}", "m12", 20)
+                    if d: ext_ctx = d
+                
+                sys_prompt = create_olivia_prompt(desc, ctrys)
+                final_text_prompt = sys_prompt
+                if ext_ctx: final_text_prompt += f"\n\nREGULATORY CONTEXT (EXTERNAL):\n{ext_ctx}"
+                if pdf_context: final_text_prompt += f"\n\nPRODUCT DOCUMENTS CONTEXT:\n{pdf_context}"
+                
+                messages = []
+                user_content = [{"type": "text", "text": final_text_prompt}]
+                for img_b64 in images_payload:
+                    user_content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}})
+                messages.append({"role": "user", "content": user_content})
+                
+                resp = cached_ai_generation(None, "gpt-4o", 0.1, messages=messages)
+                st.session_state["last_olivia_report"] = resp
+                st.session_state["last_olivia_id"] = str(uuid.uuid4())
+                log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)}")
+                st.toast("Analysis Ready!", icon="✅")
+            except Exception as e: st.error(f"Error: {str(e)}")
+
+    if st.session_state["last_olivia_report"]:
+        st.markdown("---")
+        st.success("✅ Analysis Generated")
+        st.markdown(st.session_state["last_olivia_report"])
+        st.markdown("---")
+        try:
+            safe_id = st.session_state.get('last_olivia_id', str(uuid.uuid4())[:8])
+            file_name_pdf = f"VALHALLAI_Report_{safe_id}.pdf"
+            pdf = generate_pdf_report("Regulatory Analysis Report", st.session_state["last_olivia_report"], safe_id)
+            if pdf: st.download_button("📥 Download PDF", pdf, file_name_pdf, "application/pdf")
+            else: st.error("PDF Generation failed.")
+        except Exception as e: st.error(f"PDF Error: {str(e)}")
+
+def page_eva():
+    st.title("🔍 EVA Workspace")
+    ctx = st.text_area("Context", value=st.session_state.get("last_olivia_report", ""), key="eva_ctx")
+    up = st.file_uploader("PDF", type="pdf", key="eva_up")
+    if st.button("Run Audit", type="primary", key="eva_btn") and up:
+        with st.spinner("Auditing..."):
+            try:
+                txt = extract_text_from_pdf(up.read())
+                resp = cached_ai_generation(create_eva_prompt(ctx, txt), "gpt-4o", 0.1)
+                st.session_state["last_eva_report"] = resp
+                st.session_state["last_eva_id"] = str(uuid.uuid4())
+                log_usage("EVA", st.session_state["last_eva_id"], f"File: {up.name}")
+                st.toast("Audit Complete!", icon="🔍")
+            except Exception as e: st.error(str(e))
+    
+    if st.session_state.get("last_eva_report"):
+        st.markdown("### Audit Results")
+        st.markdown(st.session_state["last_eva_report"])
+        st.markdown("---")
+        try:
+            safe_id = st.session_state.get('last_eva_id', str(uuid.uuid4())[:8])
+            file_name_pdf = f"VALHALLAI_Audit_{safe_id}.pdf"
+            pdf = generate_pdf_report("Compliance Audit Report", st.session_state["last_eva_report"], safe_id)
+            if pdf: st.download_button("📥 Download PDF", pdf, file_name_pdf, "application/pdf")
+        except: pass
 
 def page_dashboard():
     st.title("Dashboard")
