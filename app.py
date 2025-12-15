@@ -448,15 +448,12 @@ def cached_async_mia_deep_search(query, date_restrict_code, max_results):
 
     except Exception as e: return None, str(e), 0
 
-# --- CACHED AI GENERATION (V41 - MULTIMODAL) ---
+# --- CACHED AI GENERATION ---
 @st.cache_data(show_spinner=False)
 def cached_ai_generation(prompt, model, temp, json_mode=False, messages=None):
     client = get_openai_client()
     if not client: return None
     
-    # Construction du message
-    # Si 'messages' est fourni (pour le multimodal), on l'utilise.
-    # Sinon, on utilise le 'prompt' simple.
     if messages:
         final_messages = messages
     else:
@@ -1014,7 +1011,9 @@ def page_olivia():
                 resp = cached_ai_generation(None, "gpt-4o", 0.1, messages=messages)
                 
                 st.session_state["last_olivia_report"] = resp
+                # FIX V42: ID généré avant pour être sûr
                 st.session_state["last_olivia_id"] = str(uuid.uuid4())
+                
                 log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)} | Docs:{len(uploads) if uploads else 0}")
                 st.toast("Analysis Ready!", icon="✅")
             except Exception as e: st.error(f"Error: {str(e)}")
@@ -1025,9 +1024,18 @@ def page_olivia():
         st.markdown(st.session_state["last_olivia_report"])
         st.markdown("---")
         try:
-            pdf = generate_pdf_report("Regulatory Analysis Report", st.session_state["last_olivia_report"], st.session_state.get("last_olivia_id", "ID"))
-            st.download_button("📥 Download PDF", pdf, f"VALHALLAI_Report.pdf", "application/pdf")
-        except:
+            # FIX V42: Sécurisation du nom de fichier
+            safe_id = st.session_state.get('last_olivia_id', str(uuid.uuid4())[:8])
+            file_name_pdf = f"VALHALLAI_Report_{safe_id}.pdf"
+            
+            pdf = generate_pdf_report("Regulatory Analysis Report", st.session_state["last_olivia_report"], safe_id)
+            
+            if pdf:
+                st.download_button("📥 Download PDF", pdf, file_name_pdf, "application/pdf")
+            else:
+                st.error("PDF Generation failed (Check logs).")
+        except Exception as e:
+            st.error(f"PDF Error: {str(e)}")
             st.download_button("📥 Download Raw Text", st.session_state["last_olivia_report"], "report.md")
 
 def page_eva():
@@ -1050,8 +1058,13 @@ def page_eva():
         st.markdown(st.session_state["last_eva_report"])
         st.markdown("---")
         try:
-            pdf = generate_pdf_report("Compliance Audit Report", st.session_state["last_eva_report"], st.session_state.get("last_eva_id", "ID"))
-            st.download_button("📥 Download PDF", pdf, f"VALHALLAI_Audit.pdf", "application/pdf")
+            # FIX V42: Sécurisation du nom de fichier
+            safe_id = st.session_state.get('last_eva_id', str(uuid.uuid4())[:8])
+            file_name_pdf = f"VALHALLAI_Audit_{safe_id}.pdf"
+            
+            pdf = generate_pdf_report("Compliance Audit Report", st.session_state["last_eva_report"], safe_id)
+            if pdf:
+                st.download_button("📥 Download PDF", pdf, file_name_pdf, "application/pdf")
         except:
             st.download_button("📥 Download Text", st.session_state["last_eva_report"], "audit.md")
 
