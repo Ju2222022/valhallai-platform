@@ -1,124 +1,151 @@
-import os
-import urllib.request
-from datetime import datetime
-from fpdf import FPDF
-from fpdf.fonts import FontFace
 import markdown
-import config
+from xhtml2pdf import pisa
+import io
+from datetime import datetime
 
-# --- GESTION AUTOMATIQUE DE LA POLICE UNICODE ---
-FONT_URL = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf"
-FONT_BOLD_URL = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSans/NotoSans-Bold.ttf"
-FONT_PATH = "NotoSans-Regular.ttf"
-FONT_BOLD_PATH = "NotoSans-Bold.ttf"
+def generate_pdf_report(title, content_markdown, report_id):
+    """
+    Génère un PDF stylisé à partir de Markdown avec une mise en page aérée via CSS.
+    Remplace FPDF pour un meilleur contrôle typographique (Line-height, margins).
+    """
+    
+    # 1. Conversion du contenu Markdown en HTML
+    html_content = markdown.markdown(content_markdown)
 
-def ensure_fonts_exist():
-    """Télécharge les polices si elles sont absentes."""
-    if not os.path.exists(FONT_PATH):
-        urllib.request.urlretrieve(FONT_URL, FONT_PATH)
-    if not os.path.exists(FONT_BOLD_PATH):
-        urllib.request.urlretrieve(FONT_BOLD_URL, FONT_BOLD_PATH)
+    # 2. Date du jour
+    date_str = datetime.now().strftime("%d/%m/%Y")
 
-class ValhallaiPDF(FPDF):
-    def __init__(self, title_doc, report_id):
-        ensure_fonts_exist()
-        super().__init__()
-        self.title_doc = title_doc
-        self.report_id = report_id
-        self.colors = config.COLORS["light"]
-        
-        # Enregistrement de la police pour gérer l'Unicode
-        self.add_font("NotoSans", style="", fname=FONT_PATH)
-        self.add_font("NotoSans", style="B", fname=FONT_BOLD_PATH)
+    # 3. Template HTML avec CSS Avancé (C'est ici que se joue l'aération)
+    html_template = f"""
+    <html>
+    <head>
+        <style>
+            @page {{
+                size: A4;
+                margin: 2.5cm;
+                @frame footer_frame {{
+                    -pdf-frame-content: footerContent;
+                    bottom: 1cm;
+                    margin-left: 2.5cm;
+                    margin-right: 2.5cm;
+                    height: 1cm;
+                }}
+            }}
+            
+            body {{
+                font-family: Helvetica, sans-serif;
+                font-size: 11pt;
+                line-height: 1.6; /* CLIÉ : Augmente l'espace entre les lignes (Aération) */
+                color: #333333;
+            }}
 
-    def header(self):
-        # --- 1. LOGO (GAUCHE) ---
-        start_y = 12
-        
-        # Damier
-        self.set_fill_color(41, 90, 99) 
-        self.rect(10, start_y, 5, 5, 'F')
-        self.set_fill_color(200, 169, 81) 
-        self.rect(16, start_y, 5, 5, 'F')
-        self.set_fill_color(26, 60, 66) 
-        self.rect(10, start_y + 6, 5, 5, 'F')
-        self.set_fill_color(230, 213, 167) 
-        self.rect(16, start_y + 6, 5, 5, 'F')
+            /* --- HEADER --- */
+            .header-container {{
+                padding-bottom: 20px;
+                border-bottom: 2px solid #C8A951; /* Ligne dorée */
+                margin-bottom: 30px;
+            }}
+            .brand {{
+                color: #295A63;
+                font-size: 20pt;
+                font-weight: bold;
+            }}
+            .tagline {{
+                color: #666;
+                font-size: 9pt;
+                letter-spacing: 2px;
+                text-transform: uppercase;
+            }}
+            .meta-info {{
+                text-align: right;
+                font-size: 9pt;
+                color: #888;
+                margin-top: -35px; /* Remonte pour s'aligner avec le logo */
+            }}
 
-        # Marque "VALHALLAI"
-        self.set_font('NotoSans', 'B', 20)
-        self.set_xy(24, start_y) 
-        self.set_text_color(41, 90, 99)
-        self.cell(0, 8, 'VALHALLAI', ln=0)
-        
-        # Slogan
-        self.set_font('NotoSans', '', 9)
-        self.set_xy(24, start_y + 8)
-        self.set_text_color(100, 100, 100)
-        self.cell(0, 5, 'REGULATORY SHIELD', ln=0)
+            /* --- TYPOGRAPHIE CONTENU --- */
+            h1 {{
+                color: #295A63;
+                font-size: 22pt;
+                margin-top: 0;
+                margin-bottom: 20px;
+            }}
+            h2 {{
+                color: #295A63;
+                font-size: 16pt;
+                margin-top: 25px;
+                margin-bottom: 12px;
+                border-bottom: 1px solid #eee;
+                padding-bottom: 5px;
+            }}
+            h3 {{
+                color: #1A3C42;
+                font-size: 13pt;
+                margin-top: 20px;
+                margin-bottom: 10px;
+                font-weight: bold;
+            }}
+            p {{
+                margin-bottom: 15px; /* Espace sous chaque paragraphe */
+                text-align: justify;
+            }}
+            
+            /* --- LISTES (Le point critique) --- */
+            ul, ol {{
+                margin-top: 5px;
+                margin-bottom: 20px;
+                padding-left: 20px;
+            }}
+            li {{
+                margin-bottom: 8px; /* AÉRATION : Espace entre chaque puce */
+            }}
 
-        # --- 2. INFOS DOCUMENT (DROITE) ---
-        # Astuce : On utilise une cellule qui fait TOUTE la largeur (190mm)
-        # et on aligne le texte à droite ('R'). Comme ça, c'est parfaitement calé.
-        
-        # Titre du document
-        self.set_xy(10, start_y) # On repart de la marge gauche
-        self.set_font('NotoSans', 'B', 10)
-        self.set_text_color(0, 0, 0)
-        self.cell(190, 6, self.title_doc, align='R', ln=1)
-        
-        # Date
-        current_time = datetime.now().strftime("%d/%m/%Y")
-        self.set_x(10) # Retour marge gauche
-        self.set_font('NotoSans', '', 8)
-        self.set_text_color(128, 128, 128)
-        self.cell(190, 4, f"Date: {current_time}", align='R')
+            /* --- FOOTER --- */
+            #footerContent {{
+                text-align: center;
+                color: #aaa;
+                font-size: 8pt;
+                border-top: 1px solid #eee;
+                padding-top: 10px;
+            }}
+            
+            /* Highlight box pour les résumés */
+            blockquote {{
+                background-color: #f9f9f9;
+                border-left: 5px solid #C8A951;
+                padding: 10px 15px;
+                margin: 20px 0;
+                color: #555;
+            }}
+        </style>
+    </head>
+    <body>
+        <div class="header-container">
+            <div class="brand">VALHALLAI</div>
+            <div class="tagline">Regulatory Shield</div>
+            <div class="meta-info">
+                <strong>{title}</strong><br/>
+                Date: {date_str}
+            </div>
+        </div>
 
-        # Ligne de séparation dorée
-        self.set_draw_color(200, 169, 81)
-        self.set_line_width(0.5)
-        # La ligne va de 10 à 200 (190mm de large), donc le texte au dessus (width 190) s'aligne pile dessus.
-        self.line(10, 28, 200, 28)
-        self.ln(20)
+        {html_content}
 
-    def footer(self):
-        self.set_y(-15)
-        self.set_font('NotoSans', '', 7) # Police un peu plus petite pour le footer
-        self.set_text_color(128)
-        self.set_draw_color(220, 220, 220)
-        self.line(10, 282, 200, 282)
-        
-        # ID Unique + Pagination
-        footer_text = f'Ref ID: {self.report_id}  |  Valhallai Platform Confidential  |  Page {self.page_no()}/{{nb}}'
-        self.cell(0, 10, footer_text, align='C')
+        <div id="footerContent">
+            Ref ID: {report_id} | Valhallai Platform Confidential | Generated by AI
+        </div>
+    </body>
+    </html>
+    """
 
-    def add_formatted_content(self, markdown_text):
-        self.add_page()
-        
-        # --- RÉGLAGES POUR TABLEAUX PROPRES ---
-        self.set_font('NotoSans', '', 9)
-        self.set_text_color(30, 30, 30) 
-        self.set_draw_color(200, 200, 200) 
-        self.set_line_width(0.1) 
+    # 4. Génération du PDF binaire
+    pdf_buffer = io.BytesIO()
+    pisa_status = pisa.CreatePDF(
+        io.StringIO(html_template),
+        dest=pdf_buffer
+    )
 
-        # Conversion Markdown -> HTML
-        html_text = markdown.markdown(
-            markdown_text, 
-            extensions=['tables', 'fenced_code']
-        )
-
-        # Styles sécurisés (Uniquement Titres)
-        primary_color = (41, 90, 99)
-        tag_styles = {
-            "h1": FontFace(color=primary_color, emphasis="B", size_pt=16),
-            "h2": FontFace(color=primary_color, emphasis="B", size_pt=14),
-            "h3": FontFace(color=(26, 60, 66), emphasis="B", size_pt=12),
-        }
-
-        self.write_html(html_text, table_line_separators=True, tag_styles=tag_styles)
-
-def generate_pdf_report(title, content, report_id):
-    pdf = ValhallaiPDF(title, report_id)
-    pdf.alias_nb_pages()
-    pdf.add_formatted_content(content)
-    return bytes(pdf.output())
+    if pisa_status.err:
+        return None
+    
+    return pdf_buffer.getvalue()
