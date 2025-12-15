@@ -324,41 +324,79 @@ async def async_google_search(query, domains, max_results):
     if not api_key or not cx:
         return {"items": []}, "Google Search Keys Missing"
 
-    # 1. Stratégie "Safe Zone" : Google limite les requêtes à ~32 mots-clés/opérateurs.
-    # Chaque domaine compte pour 1, chaque "OR" compte pour 1.
-    # 10 domaines = 20 tokens. Avec la requête utilisateur, on reste dans la zone verte.
-    safe_domains = domains[:10] 
+    # 1. Stratégie "Large Filet" : On force un minimum de résultats pour la découverte
+    # Même si l'admin dit "5", on scanne au moins 20 résultats Google pour avoir du choix.
+    # Si l'admin demande "50", on respecte "50".
+    target_count = max(int(max_results), 20) 
     
-    # 2. Construction de la logique booléenne
+    # Sécurité : On plafonne à 50 pour ne pas brûler le quota gratuit (100 req/jour) trop vite.
+    # 50 résultats = 5 requêtes API.
+    target_count = min(target_count, 50)
+
+    # 2. Préparation de la requête
+    # On limite les domaines dans la query pour éviter l'erreur de longueur d'URL
+    safe_domains = domains[:8] 
     sites_str = " OR ".join([f"site:{d.strip()}" for d in safe_domains if d.strip()])
-    final_query = f"{query} ({sites_str})"
+    final_query = f"{query} {sites_str}"
     
-    # 3. Utilisation propre des paramètres (Pas de concaténation manuelle d'URL !)
     base_url = "https://www.googleapis.com/customsearch/v1"
-    params = {
-        'key': api_key,
-        'cx': cx,
-        'q': final_query,
-        'num': max_results
-    }
+    
+    # 3. Génération des tâches de pagination (Pages de 10)
+    # Google demande 'num' (1-10) et 'start' (index du premier résultat)
+    tasks = []
+    for start_index in range(1, target_count + 1, 10):
+        # Le nombre d'items restants à récupérer pour cette page
+        num_items = min(10, target_count - start_index + 1)
+        if num_items <= 0: break
+        
+        params = {
+            'key': api_key,
+            'cx': cx,
+            'q': final_query,
+            'num': num_items,
+            'start': start_index
+        }
+        tasks.append(params)
 
+    # 4. Exécution parallèle
     async with aiohttp.ClientSession() as session:
-        try:
-            # On laisse aiohttp gérer l'encodage des paramètres (espaces, parenthèses, etc.)
-            async with session.get(base_url, params=params) as response:
-                if response.status == 200:
-                    return await response.json(), None
-                else:
-                    try:
-                        error_data = await response.json()
-                        error_msg = error_data.get('error', {}).get('message', await response.text())
-                    except:
-                        error_msg = await response.text()
-                    
-                    return None, f"Google API Error: {response.status} - {error_msg}"
-        except Exception as e:
-            return None, f"Connection Error: {str(e)}"
+        all_items = []
+        errors = []
 
+        async def fetch_page(p):
+            try:
+                async with session.get(base_url, params=p) as response:
+                    if response.status == 200:
+                        data = await response.json()
+                        return data.get('items', [])
+                    else:
+                        errors.append(f"HTTP {response.status}")
+                        return []
+            except Exception as e:
+                errors.append(str(e))
+                return []
+
+        # On lance toutes les pages en même temps
+        results_lists = await asyncio.gather(*[fetch_page(p) for p in tasks])
+        
+        # Fusion des résultats
+        for r_list in results_lists:
+            all_items.extend(r_list)
+
+        if not all_items and errors:
+            return {"items": []}, f"Google Errors: {', '.join(set(errors))}"
+            
+        # Dédoublonnage simple sur le lien
+        seen_links = set()
+        unique_items = []
+        for item in all_items:
+            link = item.get('link')
+            if link and link not in seen_links:
+                seen_links.add(link)
+                unique_items.append(item)
+
+        return {"items": unique_items}, None
+        
 # --- FETCH ASYNCHRONE DES SOURCES ---
 async def async_fetch_and_process_source(item, query_keywords, tavily_key):
     url = item.get('link')
