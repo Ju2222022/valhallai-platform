@@ -448,14 +448,24 @@ def cached_async_mia_deep_search(query, date_restrict_code, max_results):
 
     except Exception as e: return None, str(e), 0
 
+# --- CACHED AI GENERATION (V41 - MULTIMODAL) ---
 @st.cache_data(show_spinner=False)
-def cached_ai_generation(prompt, model, temp, json_mode=False):
+def cached_ai_generation(prompt, model, temp, json_mode=False, messages=None):
     client = get_openai_client()
     if not client: return None
-    # FORCE GPT-4o
-    actual_model = "gpt-4o" 
-    kwargs = {"model": actual_model, "messages": [{"role": "user", "content": prompt}], "temperature": temp}
+    
+    # Construction du message
+    # Si 'messages' est fourni (pour le multimodal), on l'utilise.
+    # Sinon, on utilise le 'prompt' simple.
+    if messages:
+        final_messages = messages
+    else:
+        final_messages = [{"role": "user", "content": prompt}]
+
+    kwargs = {"model": model, "messages": final_messages, "temperature": temp}
+    
     if json_mode: kwargs["response_format"] = {"type": "json_object"}
+    
     res = client.chat.completions.create(**kwargs)
     return res.choices[0].message.content
 
@@ -842,7 +852,8 @@ def page_mia():
                 st.session_state["mia_raw_count"] = raw_count
                 
                 prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
-                json_str = cached_ai_generation(prompt, config.OPENAI_MODEL, 0.1, json_mode=True)
+                # FORCE GPT-4o
+                json_str = cached_ai_generation(prompt, "gpt-4o", 0.1, json_mode=True)
                 try:
                     parsed_data = json.loads(json_str)
                     if "items" not in parsed_data: parsed_data["items"] = []
@@ -925,7 +936,7 @@ def page_mia():
                             st.session_state["active_analysis_id"] = safe_id
                             with st.spinner("Evaluating..."):
                                 ia_prompt = create_impact_analysis_prompt(prod_ctx, f"{item['title']}: {item['summary']}")
-                                ia_res = cached_ai_generation(ia_prompt, config.OPENAI_MODEL, 0.1)
+                                ia_res = cached_ai_generation(ia_prompt, "gpt-4o", 0.1)
                                 st.session_state["mia_impact_results"][safe_id] = ia_res
                                 st.rerun()
 
@@ -937,33 +948,76 @@ def page_olivia():
     st.title("🤖 OlivIA Workspace")
     markets, _ = get_markets()
     c1, c2 = st.columns([2, 1])
-    with c1: desc = st.text_area("Product Definition", height=200, key="oli_desc")
+    with c1: 
+        desc = st.text_area("Product Definition", height=200, key="oli_desc")
+        
+        # --- UPLOAD MULTIMODAL V41 ---
+        uploads = st.file_uploader(
+            "📎 Attach Product Specs / Brief / Images (Optional)", 
+            type=['pdf', 'png', 'jpg', 'jpeg'], 
+            accept_multiple_files=True,
+            key="oli_uploads"
+        )
+        
     with c2: 
         safe_default = [markets[0]] if markets else []
         ctrys = st.multiselect("Target Markets", markets, default=safe_default, key="oli_mkts")
         st.write(""); gen = st.button("Generate Report", type="primary", key="oli_btn")
     
     if gen and desc:
-        with st.spinner("Analyzing..."):
+        with st.spinner("Analyzing (Multimodal)..."):
             try:
+                # 1. Analyse des documents uploadés
+                pdf_context = ""
+                images_payload = []
+                
+                if uploads:
+                    for up_file in uploads:
+                        # Si PDF -> Extraction Texte
+                        if up_file.type == "application/pdf":
+                            txt = extract_text_from_pdf(up_file.read())
+                            pdf_context += f"\n--- CONTENT OF {up_file.name} ---\n{txt[:8000]}\n"
+                        # Si Image -> Encodage Base64 pour GPT-4o Vision
+                        elif up_file.type in ["image/png", "image/jpeg", "image/jpg"]:
+                            b64_img = base64.b64encode(up_file.getvalue()).decode('utf-8')
+                            images_payload.append(b64_img)
+
+                # 2. Recherche Veille (Contexte Externe)
                 use_ds = any(x in str(ctrys) for x in ["EU","USA","China"])
-                ctx = ""
+                ext_ctx = ""
                 if use_ds: 
-                    # CORRECTIF V40.0 : UTILISATION DU MOTEUR HYBRIDE ASYNCHRONE
-                    # On lance une recherche large (sur 12 mois) pour nourrir OlivIA
-                    # 'm12' = Last 12 months, '20' = Max results
                     d, error, _ = cached_async_mia_deep_search(f"Regulations for {desc} in {ctrys}", "m12", 20)
-                    if d: ctx = d
+                    if d: ext_ctx = d
                 
-                p = create_olivia_prompt(desc, ctrys)
-                if ctx: p += f"\n\nCONTEXT:\n{ctx}"
+                # 3. Construction du Prompt Système
+                sys_prompt = create_olivia_prompt(desc, ctrys)
                 
-                resp = cached_ai_generation(p, config.OPENAI_MODEL, 0.1)
+                final_text_prompt = sys_prompt
+                if ext_ctx: final_text_prompt += f"\n\nREGULATORY CONTEXT (EXTERNAL):\n{ext_ctx}"
+                if pdf_context: final_text_prompt += f"\n\nPRODUCT DOCUMENTS CONTEXT:\n{pdf_context}"
+                
+                # 4. Construction du Message Multimodal pour GPT-4o
+                messages = []
+                # Bloc Texte
+                user_content = [{"type": "text", "text": final_text_prompt}]
+                
+                # Bloc Images (Vision)
+                for img_b64 in images_payload:
+                    user_content.append({
+                        "type": "image_url",
+                        "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}
+                    })
+                
+                messages.append({"role": "user", "content": user_content})
+                
+                # 5. Appel AI (Nouvelle signature V41)
+                resp = cached_ai_generation(None, "gpt-4o", 0.1, messages=messages)
+                
                 st.session_state["last_olivia_report"] = resp
                 st.session_state["last_olivia_id"] = str(uuid.uuid4())
-                log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)}")
+                log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)} | Docs:{len(uploads) if uploads else 0}")
                 st.toast("Analysis Ready!", icon="✅")
-            except Exception as e: st.error(str(e))
+            except Exception as e: st.error(f"Error: {str(e)}")
 
     if st.session_state["last_olivia_report"]:
         st.markdown("---")
