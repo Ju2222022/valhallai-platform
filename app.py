@@ -5,6 +5,11 @@ import base64
 import uuid
 import json
 import hashlib
+import asyncio
+import aiohttp
+import fitz  # PyMuPDF
+import re
+from urllib.parse import urlparse, quote_plus
 from datetime import datetime, timedelta
 from openai import OpenAI
 from pypdf import PdfReader
@@ -49,6 +54,10 @@ DEFAULT_APP_CONFIG = {
     "max_search_results": "5"
 }
 
+def get_google_search_keys():
+    """Récupère les clés Google Search depuis les secrets."""
+    return st.secrets.get("GOOGLE_SEARCH_API_KEY"), st.secrets.get("GOOGLE_SEARCH_CX")
+
 # =============================================================================
 # 1. GESTION DES DONNÉES
 # =============================================================================
@@ -71,7 +80,9 @@ def get_gsheet_workbook():
         }
         gc = gspread.service_account_from_dict(creds_dict)
         return gc.open_by_url(st.secrets["gsheets"]["url"])
-    except: return None
+    except Exception as e: 
+        print(f"DB Error: {e}")
+        return None
 
 def get_app_config():
     """Lit la configuration depuis le GSheet (Source de Vérité)."""
@@ -88,7 +99,10 @@ def get_app_config():
             rows = sheet.get_all_values()
             if len(rows) > 1:
                 for row in rows[1:]:
-                    if len(row) >= 2: config_dict[row[0]] = row[1]
+                    if len(row) >= 2:
+                        key = str(row[0]).strip()
+                        val = str(row[1]).strip()
+                        if key in config_dict: config_dict[key] = val
         except: pass
     return config_dict
 
@@ -117,6 +131,7 @@ def log_usage(report_type, report_id, details="", extra_metrics=""):
         log_sheet.append_row([now.strftime("%Y-%m-%d"), now.strftime("%H:%M:%S"), report_id, report_type, details, extra_metrics])
     except: pass
 
+# --- HELPERS BDD ---
 def get_markets():
     wb = get_gsheet_workbook()
     if wb:
@@ -158,7 +173,6 @@ def get_domains():
                 sheet = wb.add_worksheet("Watch_domains", 100, 1)
                 for d in DEFAULT_DOMAINS: sheet.append_row([d])
                 return DEFAULT_DOMAINS, True
-            
             vals = sheet.col_values(1)
             if not vals:
                  for d in DEFAULT_DOMAINS: sheet.append_row([d])
@@ -259,36 +273,144 @@ def init_session_state():
 init_session_state()
 
 # =============================================================================
-# 4. API & SEARCH & CACHING
+# 4. API & SEARCH & CACHING (ARCHITECTURE HYBRIDE ASYNCHRONE)
 # =============================================================================
 def get_api_key(): return st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
 def get_openai_client():
     k = get_api_key()
     return OpenAI(api_key=k) if k else None
 
-@st.cache_data(show_spinner=False, ttl=3600)
-def cached_run_deep_search(query, days=None, max_results=5):
+# --- PDF PROCESSING AVEC PyMuPDF (DENSITE) ---
+def extract_pdf_content_by_density(pdf_bytes, keywords, window_size=500):
+    """Extrait le contenu PDF basé sur la densité des mots-clés."""
     try:
-        k = st.secrets.get("TAVILY_API_KEY")
-        if not k: return None, "Key Missing"
-        tavily = TavilyClient(api_key=k)
+        doc = fitz.open(stream=pdf_bytes, filetype="pdf")
+        full_text = ""
+        for page in doc:
+            full_text += page.get_text() + "\n"
+        doc.close()
+
+        if not full_text.strip(): return "Error: Scanned PDF (No text layer)."
+
+        words = re.findall(r'\b\w+\b', full_text.lower())
+        norm_keywords = [w.lower() for w in keywords if len(w) > 2]
+        
+        if not norm_keywords: return full_text[:3000] # Fallback
+
+        best_score = -1
+        best_window_text = ""
+        
+        for i in range(0, len(words), 100):
+            end = min(i + window_size, len(words))
+            window = words[i:end]
+            score = sum(window.count(k) for k in norm_keywords)
+            
+            if score > best_score:
+                best_score = score
+                snippet_start = full_text.lower().find(' '.join(words[i:i+5]).lower())
+                if snippet_start != -1:
+                    best_window_text = full_text[snippet_start : snippet_start + 4000]
+        
+        return best_window_text.strip() if best_window_text else full_text[:3000]
+
+    except Exception as e:
+        return f"PDF Process Error: {str(e)}"
+
+# --- GOOGLE CUSTOM SEARCH ASYNCHRONE ---
+async def async_google_search(query, domains, max_results):
+    api_key, cx = get_google_search_keys()
+    if not api_key or not cx:
+        return {"items": []}, "Google Search Keys Missing"
+
+    query_str = quote_plus(query)
+    safe_domains = domains[:20] 
+    site_search = " OR ".join([f"site:{d}" for d in safe_domains])
+    
+    url = (f"https://www.googleapis.com/customsearch/v1?"
+           f"key={api_key}&cx={cx}&q={query_str}&num={max_results}&siteSearch={quote_plus(site_search)}")
+
+    async with aiohttp.ClientSession() as session:
+        try:
+            async with session.get(url) as response:
+                if response.status == 200:
+                    return await response.json(), None
+                else:
+                    return None, f"Google API Error: {response.status}"
+        except Exception as e:
+            return None, f"Connection Error: {str(e)}"
+
+# --- FETCH ASYNCHRONE DES SOURCES ---
+async def async_fetch_and_process_source(item, query_keywords, tavily_key):
+    url = item.get('link')
+    title = item.get('title')
+    
+    if not url: return None
+    
+    headers = {'User-Agent': 'Mozilla/5.0 (compatible; MIA-Bot/1.0)'}
+    
+    # 1. CAS PDF
+    if url.lower().endswith('.pdf'):
+        try:
+            timeout = aiohttp.ClientTimeout(total=15)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.get(url, headers=headers) as resp:
+                    if resp.status == 200 and 'application/pdf' in resp.headers.get('Content-Type', ''):
+                        pdf_bytes = await resp.read()
+                        content = extract_pdf_content_by_density(pdf_bytes, query_keywords)
+                        return {"source": url, "type": "pdf", "title": title, "content": content}
+        except:
+            pass 
+
+    # 2. CAS WEB (FALLBACK TAVILY)
+    try:
+        if not tavily_key: return None
+        tavily = TavilyClient(api_key=tavily_key)
+        response = tavily.search(query=url, search_depth="basic", max_results=1)
+        
+        if response and response.get('results'):
+            content = response['results'][0]['content']
+            return {"source": url, "type": "web", "title": title, "content": content[:8000]}
+    except:
+        pass
+    
+    return None
+
+# --- FONCTION PRINCIPALE DE RECHERCHE HYBRIDE ---
+@st.cache_data(show_spinner=False, ttl=3600)
+def cached_async_mia_deep_search(query, days_limit, max_results):
+    try:
         doms, _ = get_domains()
+        tavily_key = st.secrets.get("TAVILY_API_KEY")
+        if not doms or not tavily_key: return None, "Configuration Error", 0
         
-        params = {
-            "query": query, 
-            "search_depth": "advanced", 
-            "max_results": max_results, 
-            "include_domains": doms
-        }
-        if days: params["days"] = days
+        keywords = re.findall(r'\b\w+\b', query.lower())
+
+        async def run_pipeline():
+            google_json, error = await async_google_search(query, doms, max_results)
+            if error or not google_json: return [], error
+            
+            items = google_json.get('items', [])
+            tasks = [async_fetch_and_process_source(i, keywords, tavily_key) for i in items]
+            return await asyncio.gather(*tasks), None
+
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            
+        results, error = loop.run_until_complete(run_pipeline())
         
-        response = tavily.search(**params)
-        raw_count = len(response.get('results', []))
+        if error: return None, error, 0
         
-        txt = f"### WEB RESULTS ({raw_count} FOUND):\n"
-        for r in response['results']:
-            txt += f"- Title: {r['title']}\n  URL: {r['url']}\n  Content: {r['content'][:800]}...\n\n"
-        return txt, None, raw_count 
+        clean_results = [r for r in results if r is not None]
+        raw_count = len(clean_results)
+        
+        txt = f"### INTELLIGENT SEARCH ({raw_count} sources processed):\n"
+        for r in clean_results:
+            txt += f"- Title: {r['title']}\n  URL: {r['source']}\n  Type: {r['type'].upper()}\n  Content: {r['content'][:800]}...\n\n"
+            
+        return txt, None, raw_count
 
     except Exception as e: return None, str(e), 0
 
@@ -404,7 +526,6 @@ def create_eva_prompt(ctx, doc):
     Mission: Compliance Audit. Output: Strict English Markdown.
     Structure: 1. Verdict, 2. Gap Table (Requirement|Status|Evidence|Missing), 3. Risks, 4. Recommendations."""
 
-# --- NOUVEAU PROMPT MIA OPTIMISÉ ---
 def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     return f"""
 ROLE: You are MIA (Market Intelligence Agent), a specialized assistant for regulatory and standards monitoring (Regulatory Affairs / Regulatory Intelligence).
@@ -512,37 +633,6 @@ def get_logo_html(size=50):
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
     return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 10px; display: inline-block;">'
 
-# --- THEME CSS ---
-def apply_theme():
-    st.markdown("""
-    <style>
-    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700&family=Inter:wght@400;600&display=swap');
-    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
-    h1, h2, h3 { font-family: 'Montserrat', sans-serif !important; color: #295A63 !important; }
-    
-    div.stButton > button:first-child { 
-        background-color: #295A63 !important; color: white !important; 
-        border-radius: 8px; font-weight: 600; width: 100%; border: none;
-    }
-    div.stButton > button:first-child:hover { background-color: #C8A951 !important; color: black !important; }
-    
-    .info-card { 
-        background-color: white; padding: 2rem; border-radius: 12px; border: 1px solid #E2E8F0; 
-        min-height: 220px; display: flex; flex-direction: column; justify-content: flex-start;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
-    }
-    .stTextInput > div > div:focus-within { border-color: #295A63 !important; box-shadow: 0 0 0 1px #295A63 !important; }
-    
-    .justified-text {
-        text-align: justify; line-height: 1.6; color: #2c3e50;
-        background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #295A63;
-    }
-    
-    .mia-link a { color: #295A63 !important; text-decoration: none; font-weight: 700; font-size: 1.1em; border-bottom: 2px solid #C8A951; }
-    .mia-link a:hover { color: #C8A951 !important; background-color: #f0f0f0; }
-    </style>
-    """, unsafe_allow_html=True)
-
 # =============================================================================
 # 7. PAGES UI
 # =============================================================================
@@ -558,7 +648,6 @@ def page_admin():
 
     tm, td, tc = st.tabs(["🌍 Markets", "🕵️‍♂️ MIA Sources", "🎛️ MIA Settings"])
     
-    # 1. MARKETS (ALIGNE)
     with tm:
         mkts, _ = get_markets()
         with st.form("add_m"):
@@ -573,7 +662,6 @@ def page_admin():
                      st.write("Delete?")
                      if st.button("Yes", key=f"y_m_{i}"): remove_market(i); st.rerun()
     
-    # 2. SOURCES (ALIGNE)
     with td:
         doms, _ = get_domains()
         st.info("💡 Deep Search Sources.")
@@ -589,7 +677,6 @@ def page_admin():
                      st.write("Delete?")
                      if st.button("Yes", key=f"y_d_{i}"): remove_domain(i); st.rerun()
 
-    # 3. SETTINGS
     with tc:
         st.markdown("#### Feature Flags")
         app_config = st.session_state.get("app_config", get_app_config())
@@ -660,7 +747,7 @@ def page_mia():
     markets, _ = get_markets()
     col1, col2, col3 = st.columns([2, 2, 1], gap="large")
     with col1: 
-        topic = st.text_input("🔎 Watch Topic / Product", value=st.session_state.get("mia_topic_val", ""), placeholder="e.g. USB Type C cables")
+        topic = st.text_input("🔎 Watch Topic / Product", value=st.session_state.get("mia_topic_val", ""), placeholder="e.g. Cybersecurity for SaMD")
     with col2: 
         default_mkts = [m for m in st.session_state.get("mia_markets_val", []) if m in markets]
         if not default_mkts and markets: default_mkts = [markets[0]]
@@ -691,7 +778,7 @@ def page_mia():
         with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
             clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
             query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
-            raw_data, error, raw_count = cached_run_deep_search(query, days=days_limit, max_results=max_res)
+            raw_data, error, raw_count = cached_async_mia_deep_search(query, days=days_limit, max_results=max_res)
             
             if not raw_data: st.error(f"Search failed: {error}")
             else:
