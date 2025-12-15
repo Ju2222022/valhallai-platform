@@ -8,3 +8,4 @@ plotly
 pandas
 aiohttp
 fpdf2
+markdown
