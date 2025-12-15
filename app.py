@@ -273,7 +273,7 @@ def init_session_state():
 init_session_state()
 
 # =============================================================================
-# 4. API & SEARCH & CACHING (NOUVELLE ARCHITECTURE ASYNCHRONE)
+# 4. API & SEARCH & CACHING (ARCHITECTURE HYBRIDE V2 PRO)
 # =============================================================================
 def get_api_key(): return st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
 def get_openai_client():
@@ -318,34 +318,26 @@ def extract_pdf_content_by_density(pdf_bytes, keywords, window_size=500):
     except Exception as e:
         return f"PDF Process Error: {str(e)}"
 
-# --- GOOGLE CUSTOM SEARCH ASYNCHRONE ---
+# --- GOOGLE CUSTOM SEARCH ASYNCHRONE (PAGINATION) ---
 async def async_google_search(query, domains, max_results):
     api_key, cx = get_google_search_keys()
     if not api_key or not cx:
         return {"items": []}, "Google Search Keys Missing"
 
-    # 1. Stratégie "Large Filet" : On force un minimum de résultats pour la découverte
-    # Même si l'admin dit "5", on scanne au moins 20 résultats Google pour avoir du choix.
-    # Si l'admin demande "50", on respecte "50".
+    # 1. Stratégie "Large Filet"
     target_count = max(int(max_results), 20) 
-    
-    # Sécurité : On plafonne à 50 pour ne pas brûler le quota gratuit (100 req/jour) trop vite.
-    # 50 résultats = 5 requêtes API.
-    target_count = min(target_count, 50)
+    target_count = min(target_count, 50) # Sécurité quota
 
     # 2. Préparation de la requête
-    # On limite les domaines dans la query pour éviter l'erreur de longueur d'URL
     safe_domains = domains[:8] 
     sites_str = " OR ".join([f"site:{d.strip()}" for d in safe_domains if d.strip()])
     final_query = f"{query} {sites_str}"
     
     base_url = "https://www.googleapis.com/customsearch/v1"
     
-    # 3. Génération des tâches de pagination (Pages de 10)
-    # Google demande 'num' (1-10) et 'start' (index du premier résultat)
+    # 3. Génération des tâches de pagination
     tasks = []
     for start_index in range(1, target_count + 1, 10):
-        # Le nombre d'items restants à récupérer pour cette page
         num_items = min(10, target_count - start_index + 1)
         if num_items <= 0: break
         
@@ -376,17 +368,15 @@ async def async_google_search(query, domains, max_results):
                 errors.append(str(e))
                 return []
 
-        # On lance toutes les pages en même temps
         results_lists = await asyncio.gather(*[fetch_page(p) for p in tasks])
         
-        # Fusion des résultats
         for r_list in results_lists:
             all_items.extend(r_list)
 
         if not all_items and errors:
             return {"items": []}, f"Google Errors: {', '.join(set(errors))}"
             
-        # Dédoublonnage simple sur le lien
+        # Dédoublonnage
         seen_links = set()
         unique_items = []
         for item in all_items:
@@ -396,7 +386,7 @@ async def async_google_search(query, domains, max_results):
                 unique_items.append(item)
 
         return {"items": unique_items}, None
-        
+
 # --- FETCH ASYNCHRONE DES SOURCES ---
 async def async_fetch_and_process_source(item, query_keywords, tavily_key):
     url = item.get('link')
@@ -420,12 +410,10 @@ async def async_fetch_and_process_source(item, query_keywords, tavily_key):
             pass # Failover vers Web/Tavily
 
     # 2. CAS WEB (FALLBACK TAVILY)
-    # On utilise Tavily pour le scraping robuste des pages HTML complexes
     try:
         if not tavily_key: return None
-        # Appel synchrone encapsulé (rapide car 1 URL spécifique)
         tavily = TavilyClient(api_key=tavily_key)
-        response = tavily.search(query=url, search_depth="basic", max_results=1) # On cherche l'URL pour extraire
+        response = tavily.search(query=url, search_depth="basic", max_results=1)
         
         if response and response.get('results'):
             content = response['results'][0]['content']
@@ -439,14 +427,12 @@ async def async_fetch_and_process_source(item, query_keywords, tavily_key):
 @st.cache_data(show_spinner=False, ttl=3600)
 def cached_async_mia_deep_search(query, days_limit, max_results):
     try:
-        # 1. Setup
         doms, _ = get_domains()
         tavily_key = st.secrets.get("TAVILY_API_KEY")
         if not doms or not tavily_key: return None, "Configuration Error", 0
         
         keywords = re.findall(r'\b\w+\b', query.lower())
 
-        # 2. Google Discovery (Async Wrapper)
         async def run_pipeline():
             google_json, error = await async_google_search(query, doms, max_results)
             if error or not google_json: return [], error
@@ -466,7 +452,7 @@ def cached_async_mia_deep_search(query, days_limit, max_results):
         
         if error: return None, error, 0
         
-        # 3. Formatting
+        # Formatting
         clean_results = [r for r in results if r is not None]
         raw_count = len(clean_results)
         
@@ -590,7 +576,7 @@ def create_eva_prompt(ctx, doc):
     Mission: Compliance Audit. Output: Strict English Markdown.
     Structure: 1. Verdict, 2. Gap Table (Requirement|Status|Evidence|Missing), 3. Risks, 4. Recommendations."""
 
-# --- NOUVEAU PROMPT MIA OPTIMISÉ ---
+# --- PROMPT MIA (V33) ---
 def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     return f"""
 ROLE: You are MIA (Market Intelligence Agent), a specialized assistant for regulatory and standards monitoring (Regulatory Affairs / Regulatory Intelligence).
@@ -744,7 +730,6 @@ def page_admin():
 
     tm, td, tc = st.tabs(["🌍 Markets", "🕵️‍♂️ MIA Sources", "🎛️ MIA Settings"])
     
-    # 1. MARKETS (ALIGNE)
     with tm:
         mkts, _ = get_markets()
         with st.form("add_m"):
@@ -759,7 +744,6 @@ def page_admin():
                      st.write("Delete?")
                      if st.button("Yes", key=f"y_m_{i}"): remove_market(i); st.rerun()
     
-    # 2. SOURCES (ALIGNE)
     with td:
         doms, _ = get_domains()
         st.info("💡 Deep Search Sources.")
@@ -775,7 +759,6 @@ def page_admin():
                      st.write("Delete?")
                      if st.button("Yes", key=f"y_d_{i}"): remove_domain(i); st.rerun()
 
-    # 3. SETTINGS
     with tc:
         st.markdown("#### Feature Flags")
         app_config = st.session_state.get("app_config", get_app_config())
@@ -794,12 +777,22 @@ def page_admin():
         st.markdown("#### Performance")
         
         curr_max = app_config.get("max_search_results", "5")
-        new_max = st.text_input("Max Tavily Results (1-100)", value=curr_max)
-        if st.button("Update Max Results"):
+        
+        # UI/UX : Libellé clair pour le mode hybride
+        new_max = st.text_input(
+            "🎯 Target Sources Volume (Max to Scan)", 
+            value=curr_max,
+            help="Controls the width of the Google Discovery net. \n\n"
+                 "• PDFs are processed locally (Free).\n"
+                 "• Complex Web pages use Tavily Fallback (Credits).\n"
+                 "• Higher value = Better intelligence, but potentially higher usage."
+        )
+        
+        if st.button("Update Volume"):
             if new_max.isdigit() and 1 <= int(new_max) <= 100:
                 update_app_config("max_search_results", new_max)
                 st.session_state["app_config"]["max_search_results"] = new_max
-                st.success("✅ Updated! Effective immediately.")
+                st.success("✅ Updated! Discovery net widened.")
             else:
                 st.error("Enter a number between 1 and 100.")
         
