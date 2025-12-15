@@ -47,7 +47,8 @@ class ValhallaiPDF(FPDF):
         self.set_xy(100, 12)
         self.set_font(self.main_font, 'B', 10)
         self.set_text_color(0)
-        self.cell(100, 6, self.title_doc[:50], align='R', ln=1)
+        clean_title = (self.title_doc[:45] + '...') if len(self.title_doc) > 45 else self.title_doc
+        self.cell(100, 6, clean_title, align='R', ln=1)
         
         self.set_xy(100, 18)
         self.set_font(self.main_font, '', 8)
@@ -61,7 +62,7 @@ class ValhallaiPDF(FPDF):
         self.set_text_color(128)
         self.cell(0, 10, f'ID: {self.report_id} | Page {self.page_no()}/{{nb}}', align='C')
 
-    # --- MOTEUR DE RENDU MAISON (POUR TABLEAUX & LISTES) ---
+    # --- MOTEUR DE RENDU AMÉLIORÉ ---
     def print_chapter_title(self, label, level=1):
         self.ln(4)
         if level == 1:
@@ -83,49 +84,58 @@ class ValhallaiPDF(FPDF):
     def print_list_item(self, text):
         self.set_font(self.main_font, '', 10)
         self.set_text_color(30, 30, 30)
-        # Balle noire simple + Indentation
-        self.set_x(15) 
-        self.multi_cell(0, 5, f"{chr(149)} {text}")
+        
+        # Astuce : On imprime la puce et le texte dans la même MultiCell
+        # pour que l'indentation de la 2ème ligne soit alignée.
+        # \x95 est le caractère "Bullet point" standard
+        formatted_text = f"  {chr(149)}  {text}"
+        self.multi_cell(0, 5, formatted_text)
         self.ln(1)
 
     def print_table_row(self, cells, is_header=False):
-        # Calcul largeur colonnes (équitable)
-        page_width = self.w - 20 # Marges 10+10
+        page_width = self.w - 20
         col_width = page_width / max(len(cells), 1)
-        
-        # Hauteur de ligne (le max nécessaire)
-        self.set_font(self.main_font, 'B' if is_header else '', 9)
         line_height = 5
         
-        # On sauvegarde la position Y avant d'écrire
-        y_start = self.get_y()
+        self.set_font(self.main_font, 'B' if is_header else '', 9)
         
-        # On calcule la hauteur max de cette ligne (multiligne)
+        # 1. Calcul de la hauteur MAX de la ligne (pour alignement)
         max_h = 0
         for cell in cells:
-            # Simulation pour connaître la hauteur
-            lines = self.multi_cell(col_width, line_height, cell, split_only=True)
-            h = len(lines) * line_height
+            # On demande à FPDF combien de lignes prendrait ce texte
+            # get_string_width ne suffit pas car multi_cell wrap
+            # On simule via le nombre de caractères approx (méthode robuste)
+            nb_lines = len(self.multi_cell(col_width, line_height, cell, split_only=True))
+            h = nb_lines * line_height
             if h > max_h: max_h = h
         
-        # Si on dépasse la page, on saute
-        if y_start + max_h > self.page_break_trigger:
+        # Sécurité minimum
+        if max_h < line_height: max_h = line_height
+        
+        # Saut de page si nécessaire
+        if self.get_y() + max_h > self.page_break_trigger:
             self.add_page()
-            y_start = self.get_y()
 
-        # Écriture réelle
+        # 2. Dessin des cellules
         x_start = 10
+        y_start = self.get_y()
+        
         for cell in cells:
             self.set_xy(x_start, y_start)
-            # Fond gris pour header
-            self.set_fill_color(240, 240, 240) if is_header else self.set_fill_color(255)
-            self.multi_cell(col_width, line_height, cell, border=1, align='L', fill=is_header)
+            if is_header:
+                self.set_fill_color(240, 240, 240)
+                self.multi_cell(col_width, line_height, cell, border=1, align='L', fill=True)
+            else:
+                # On dessine d'abord le cadre vide de la bonne hauteur
+                self.rect(x_start, y_start, col_width, max_h)
+                # Puis on écrit le texte dedans
+                self.multi_cell(col_width, line_height, cell, border=0, align='L')
+            
             x_start += col_width
             
         self.set_y(y_start + max_h)
 
     def parse_markdown(self, md_text):
-        """Lit le markdown ligne par ligne et appelle la bonne méthode de dessin."""
         lines = md_text.split('\n')
         in_table = False
         
@@ -135,12 +145,9 @@ class ValhallaiPDF(FPDF):
             
             # --- TABLEAUX ---
             if '|' in line and len(line.split('|')) > 2:
-                # C'est une ligne de tableau
-                if '---' in line: continue # On saute la ligne de séparation markdown
-                
+                if '---' in line: continue 
                 cells = [c.strip() for c in line.split('|') if c.strip() != '']
                 if not in_table:
-                    # Première ligne = Header
                     self.print_table_row(cells, is_header=True)
                     in_table = True
                 else:
@@ -157,13 +164,14 @@ class ValhallaiPDF(FPDF):
             elif line.startswith('### '):
                 self.print_chapter_title(line.replace('### ', ''), 2)
                 
-            # --- LISTES ---
+            # --- LISTES (Fix Alignement) ---
+            # On traite les puces (*) et les numéros (1.) de la même façon visuelle
             elif line.startswith('- ') or line.startswith('* '):
                 clean = line[2:].replace('**', '').replace('__', '')
                 self.print_list_item(clean)
             elif line[0].isdigit() and '. ' in line[:4]:
                 clean = line.split('. ', 1)[1].replace('**', '')
-                self.print_list_item(clean) # On traite les 1. comme des puces pour l'alignement
+                self.print_list_item(clean)
             
             # --- PARAGRAPHES ---
             else:
@@ -173,7 +181,7 @@ class ValhallaiPDF(FPDF):
 def generate_pdf_report(title, content, report_id):
     try:
         pdf = ValhallaiPDF(title, report_id)
-        pdf.add_page() # Une seule page ajoutée au début = Pas de page blanche
+        pdf.add_page()
         pdf.parse_markdown(content)
         return bytes(pdf.output())
     except Exception as e:
