@@ -322,11 +322,9 @@ async def async_google_search(query, domains, max_results, date_restrict=None):
     if not api_key or not cx:
         return {"items": []}, "Google Search Keys Missing"
 
-    # Batching pour contourner la limite de longueur d'URL
     BATCH_SIZE = 8
     domain_batches = [domains[i:i + BATCH_SIZE] for i in range(0, len(domains), BATCH_SIZE)]
     
-    # Distribution des résultats sur les batches
     results_per_batch = max(int(int(max_results) / len(domain_batches)), 10)
     results_per_batch = min(results_per_batch, 20)
 
@@ -389,7 +387,6 @@ async def async_fetch_and_process_source(item, query_keywords, tavily_key):
     
     headers = {'User-Agent': 'Mozilla/5.0 (compatible; MIA-Bot/1.0)'}
     
-    # 1. CAS PDF
     if url.lower().endswith('.pdf'):
         try:
             timeout = aiohttp.ClientTimeout(total=15)
@@ -401,7 +398,6 @@ async def async_fetch_and_process_source(item, query_keywords, tavily_key):
                         return {"source": url, "type": "pdf", "title": title, "content": content}
         except: pass 
 
-    # 2. CAS WEB (FALLBACK TAVILY)
     try:
         if not tavily_key: return None
         tavily = TavilyClient(api_key=tavily_key)
@@ -456,7 +452,9 @@ def cached_async_mia_deep_search(query, date_restrict_code, max_results):
 def cached_ai_generation(prompt, model, temp, json_mode=False):
     client = get_openai_client()
     if not client: return None
-    kwargs = {"model": model, "messages": [{"role": "user", "content": prompt}], "temperature": temp}
+    # FORCE GPT-4o POUR LA PERFORMANCE (MODIF V39)
+    actual_model = "gpt-4o" 
+    kwargs = {"model": actual_model, "messages": [{"role": "user", "content": prompt}], "temperature": temp}
     if json_mode: kwargs["response_format"] = {"type": "json_object"}
     res = client.chat.completions.create(**kwargs)
     return res.choices[0].message.content
@@ -518,7 +516,8 @@ def display_timeline(items):
     )
     
     start_view = now - timedelta(days=365)
-    end_view = now + timedelta(days=730)
+    # MODIF V39 : +3 ans (1095 jours)
+    end_view = now + timedelta(days=1095)
     fig.update_xaxes(range=[start_view, end_view], showgrid=True, gridcolor="#eee", zeroline=False)
     fig.update_yaxes(visible=False, showticklabels=False)
     fig.add_vline(x=now.timestamp() * 1000, line_width=2, line_dash="dot", line_color="#295A63", annotation_text="Today")
@@ -738,7 +737,6 @@ def page_admin():
         st.markdown("---")
         st.markdown("#### Performance")
         
-        # UI FIX: Passage au text_input (String) pour éviter le stepper +/-
         curr_max = app_config.get("max_search_results", "20")
         
         new_max = st.text_input(
@@ -752,7 +750,6 @@ def page_admin():
         )
         
         if st.button("Update Volume"):
-            # Validation manuelle du chiffre
             if new_max.isdigit() and 1 <= int(new_max) <= 100:
                 update_app_config("max_search_results", new_max)
                 st.session_state["app_config"]["max_search_results"] = new_max
@@ -803,7 +800,8 @@ def page_mia():
     markets, _ = get_markets()
     col1, col2, col3 = st.columns([2, 2, 1], gap="large")
     with col1: 
-        topic = st.text_input("🔎 Watch Topic / Product", value=st.session_state.get("mia_topic_val", ""), placeholder="e.g. Cybersecurity for SaMD")
+        # MODIF V39 : Placeholder mis à jour
+        topic = st.text_input("🔎 Watch Topic / Product", value=st.session_state.get("mia_topic_val", ""), placeholder="e.g. lithium batteries for consumer goods")
     with col2: 
         default_mkts = [m for m in st.session_state.get("mia_markets_val", []) if m in markets]
         if not default_mkts and markets: default_mkts = [markets[0]]
@@ -830,6 +828,7 @@ def page_mia():
                         save_watchlist(new_wl_name, topic, selected_markets, selected_label)
                         st.toast("Saved!", icon="💾")
                         st.cache_data.clear()
+                        st.rerun() # MODIF V39 : Force Refresh
                         
         if launch: st.session_state["mia_raw_count"] = 0 
 
@@ -844,8 +843,10 @@ def page_mia():
             else:
                 st.session_state["mia_raw_count"] = raw_count
                 
+                # MODIF V39 : Prompt V38 (Scout) pour plus de résultats
                 prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
-                json_str = cached_ai_generation(prompt, config.OPENAI_MODEL, 0.1, json_mode=True)
+                # MODIF V39 : Utilisation explicite de GPT-4o
+                json_str = cached_ai_generation(prompt, "gpt-4o", 0.1, json_mode=True)
                 try:
                     parsed_data = json.loads(json_str)
                     if "items" not in parsed_data: parsed_data["items"] = []
@@ -919,7 +920,6 @@ def page_mia():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # --- IMPACT ANALYSIS DYNAMIQUE ---
                 if show_impact:
                     with st.expander(f"⚡ Analyze Impact (Beta)", expanded=is_active):
                         default_context = st.session_state.get("mia_topic_val", topic) or ""
@@ -929,101 +929,14 @@ def page_mia():
                             st.session_state["active_analysis_id"] = safe_id
                             with st.spinner("Evaluating..."):
                                 ia_prompt = create_impact_analysis_prompt(prod_ctx, f"{item['title']}: {item['summary']}")
-                                ia_res = cached_ai_generation(ia_prompt, config.OPENAI_MODEL, 0.1)
+                                # MODIF V39 : Utilisation explicite de GPT-4o
+                                ia_res = cached_ai_generation(ia_prompt, "gpt-4o", 0.1)
                                 st.session_state["mia_impact_results"][safe_id] = ia_res
                                 st.rerun()
 
                         if safe_id in st.session_state["mia_impact_results"]:
                             st.markdown("---")
                             st.markdown(st.session_state["mia_impact_results"][safe_id])
-
-def page_olivia():
-    st.title("🤖 OlivIA Workspace")
-    markets, _ = get_markets()
-    c1, c2 = st.columns([2, 1])
-    with c1: desc = st.text_area("Product Definition", height=200, key="oli_desc")
-    with c2: 
-        safe_default = [markets[0]] if markets else []
-        ctrys = st.multiselect("Target Markets", markets, default=safe_default, key="oli_mkts")
-        st.write(""); gen = st.button("Generate Report", type="primary", key="oli_btn")
-    
-    if gen and desc:
-        with st.spinner("Analyzing..."):
-            try:
-                use_ds = any(x in str(ctrys) for x in ["EU","USA","China"])
-                ctx = ""
-                if use_ds: 
-                    d, _ = cached_run_deep_search(f"Regulations for {desc} in {ctrys}")
-                    if d: ctx = d
-                p = create_olivia_prompt(desc, ctrys)
-                if ctx: p += f"\n\nCONTEXT:\n{ctx}"
-                resp = cached_ai_generation(p, config.OPENAI_MODEL, 0.1)
-                st.session_state["last_olivia_report"] = resp
-                st.session_state["last_olivia_id"] = str(uuid.uuid4())
-                log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)}")
-                st.toast("Analysis Ready!", icon="✅")
-            except Exception as e: st.error(str(e))
-
-    if st.session_state["last_olivia_report"]:
-        st.markdown("---")
-        st.success("✅ Analysis Generated")
-        st.markdown(st.session_state["last_olivia_report"])
-        st.markdown("---")
-        try:
-            pdf = generate_pdf_report("Regulatory Analysis Report", st.session_state["last_olivia_report"], st.session_state.get("last_olivia_id", "ID"))
-            st.download_button("📥 Download PDF", pdf, f"VALHALLAI_Report.pdf", "application/pdf")
-        except:
-            st.download_button("📥 Download Raw Text", st.session_state["last_olivia_report"], "report.md")
-
-def page_eva():
-    st.title("🔍 EVA Workspace")
-    ctx = st.text_area("Context", value=st.session_state.get("last_olivia_report", ""), key="eva_ctx")
-    up = st.file_uploader("PDF", type="pdf", key="eva_up")
-    if st.button("Run Audit", type="primary", key="eva_btn") and up:
-        with st.spinner("Auditing..."):
-            try:
-                txt = extract_text_from_pdf(up.read())
-                resp = cached_ai_generation(create_eva_prompt(ctx, txt), "gpt-4o", 0.1)
-                st.session_state["last_eva_report"] = resp
-                st.session_state["last_eva_id"] = str(uuid.uuid4())
-                log_usage("EVA", st.session_state["last_eva_id"], f"File: {up.name}")
-                st.toast("Audit Complete!", icon="🔍")
-            except Exception as e: st.error(str(e))
-    
-    if st.session_state.get("last_eva_report"):
-        st.markdown("### Audit Results")
-        st.markdown(st.session_state["last_eva_report"])
-        st.markdown("---")
-        try:
-            pdf = generate_pdf_report("Compliance Audit Report", st.session_state["last_eva_report"], st.session_state.get("last_eva_id", "ID"))
-            st.download_button("📥 Download PDF", pdf, f"VALHALLAI_Audit.pdf", "application/pdf")
-        except:
-            st.download_button("📥 Download Text", st.session_state["last_eva_report"], "audit.md")
-
-def page_dashboard():
-    st.title("Dashboard")
-    st.markdown(f"<span class='sub-text'>{config.APP_SLOGAN}</span>", unsafe_allow_html=True)
-    st.markdown("###")
-    c1, c2, c3 = st.columns(3)
-    
-    with c1: 
-        st.markdown(f"""<div class="info-card"><h3>🤖 OlivIA</h3><p class='sub-text'>{config.AGENTS['olivia']['description']}</p></div>""", unsafe_allow_html=True)
-        st.write("")
-        if st.button("Launch OlivIA ->"): 
-            st.session_state["current_page"] = "OlivIA"
-            st.rerun()
-    with c2: 
-        st.markdown(f"""<div class="info-card"><h3>🔍 EVA</h3><p class='sub-text'>{config.AGENTS['eva']['description']}</p></div>""", unsafe_allow_html=True)
-        st.write("")
-        if st.button("Launch EVA ->"): 
-            st.session_state["current_page"] = "EVA"
-            st.rerun()
-    with c3: 
-        st.markdown(f"""<div class="info-card"><h3>{config.AGENTS['mia']['icon']} {config.AGENTS['mia']['name']}</h3><p class='sub-text'>{config.AGENTS['mia']['description']}</p></div>""", unsafe_allow_html=True)
-        st.write("")
-        if st.button("Launch MIA ->"): 
-            st.session_state["current_page"] = "MIA"
-            st.rerun()
 
 def render_sidebar():
     with st.sidebar:
