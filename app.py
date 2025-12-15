@@ -318,34 +318,25 @@ def extract_pdf_content_by_density(pdf_bytes, keywords, window_size=500):
 
 # --- GOOGLE CUSTOM SEARCH ASYNCHRONE (BATCHING & PAGINATION) ---
 async def async_google_search(query, domains, max_results, date_restrict=None):
-    """
-    Exécute la recherche sur TOUS les domaines en les découpant par lots (Batching).
-    """
     api_key, cx = get_google_search_keys()
     if not api_key or not cx:
         return {"items": []}, "Google Search Keys Missing"
 
-    # 1. Configuration des Batches
-    # Google limite la complexité des requêtes. On traite les domaines par paquets de 8.
+    # Batching pour contourner la limite de longueur d'URL
     BATCH_SIZE = 8
     domain_batches = [domains[i:i + BATCH_SIZE] for i in range(0, len(domains), BATCH_SIZE)]
     
-    # On distribue le nombre max de résultats sur les batches.
-    # Ex: Si on veut 20 résultats et qu'il y a 2 batches, on demande 10 par batch.
-    # On force un minimum de 10 résultats par batch pour la pertinence.
+    # Distribution des résultats sur les batches
     results_per_batch = max(int(int(max_results) / len(domain_batches)), 10)
-    results_per_batch = min(results_per_batch, 20) # Plafond sécu par batch
+    results_per_batch = min(results_per_batch, 20)
 
     base_url = "https://www.googleapis.com/customsearch/v1"
     tasks = []
 
-    # 2. Création des tâches pour chaque Batch
     for batch in domain_batches:
-        # Construction de la requête pour ce lot spécifique
         sites_str = " OR ".join([f"site:{d.strip()}" for d in batch if d.strip()])
         final_query = f"{query} {sites_str}"
         
-        # Pagination interne au batch (si on veut > 10 résultats)
         for start_index in range(1, results_per_batch + 1, 10):
             num_items = min(10, results_per_batch - start_index + 1)
             if num_items <= 0: break
@@ -362,31 +353,20 @@ async def async_google_search(query, domains, max_results, date_restrict=None):
             
             tasks.append(params)
 
-    # 3. Exécution massivement parallèle
     async with aiohttp.ClientSession() as session:
         all_items = []
-        errors = []
-
         async def fetch_task(p):
             try:
                 async with session.get(base_url, params=p) as response:
                     if response.status == 200:
                         data = await response.json()
                         return data.get('items', [])
-                    else:
-                        # On log l'erreur mais on ne bloque pas les autres batches
-                        return []
-            except:
-                return []
+                    return []
+            except: return []
 
-        # Lancement de toutes les requêtes en même temps
         results_lists = await asyncio.gather(*[fetch_task(p) for p in tasks])
-        
-        # Fusion
-        for r_list in results_lists:
-            all_items.extend(r_list)
+        for r_list in results_lists: all_items.extend(r_list)
 
-        # Dédoublonnage final
         seen_links = set()
         unique_items = []
         for item in all_items:
@@ -395,7 +375,6 @@ async def async_google_search(query, domains, max_results, date_restrict=None):
                 seen_links.add(link)
                 unique_items.append(item)
 
-        # Si 0 résultat et des erreurs, on renvoie une alerte
         if not unique_items and not results_lists: 
              return {"items": []}, "No results found (Check Query/Date/Quota)."
 
@@ -420,20 +399,17 @@ async def async_fetch_and_process_source(item, query_keywords, tavily_key):
                         pdf_bytes = await resp.read()
                         content = extract_pdf_content_by_density(pdf_bytes, query_keywords)
                         return {"source": url, "type": "pdf", "title": title, "content": content}
-        except:
-            pass 
+        except: pass 
 
     # 2. CAS WEB (FALLBACK TAVILY)
     try:
         if not tavily_key: return None
         tavily = TavilyClient(api_key=tavily_key)
         response = tavily.search(query=url, search_depth="basic", max_results=1)
-        
         if response and response.get('results'):
             content = response['results'][0]['content']
             return {"source": url, "type": "web", "title": title, "content": content[:8000]}
-    except:
-        pass
+    except: pass
     
     return None
 
@@ -448,7 +424,6 @@ def cached_async_mia_deep_search(query, date_restrict_code, max_results):
         keywords = re.findall(r'\b\w+\b', query.lower())
 
         async def run_pipeline():
-            # On passe le code de restriction temporelle à Google
             google_json, error = await async_google_search(query, doms, max_results, date_restrict=date_restrict_code)
             if error or not google_json: return [], error
             
@@ -589,46 +564,51 @@ def create_eva_prompt(ctx, doc):
     Mission: Compliance Audit. Output: Strict English Markdown.
     Structure: 1. Verdict, 2. Gap Table (Requirement|Status|Evidence|Missing), 3. Risks, 4. Recommendations."""
 
-# --- PROMPT MIA "VEILLEUR AVERTI" (V36 - PERMISSIF) ---
+# --- PROMPT MIA "SCOUT" (V38 - RADICAL RECALL) ---
 def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     return f"""
-ROLE: You are MIA (Market Intelligence Agent), a specialized assistant for Regulatory Intelligence (Veille Réglementaire).
+ROLE: You are MIA, a Regulatory Scout responsible for gathering ANY potential intelligence signal (Veille Réglementaire).
 
 CONTEXT:
 - Topic: "{topic}"
 - Markets: {', '.join(markets)}
 - Timeframe: {timeframe_label}
 
-GOAL:
-Scan the RAW SEARCH DATA and extract ANY relevant regulatory signal, news, or update published within the timeframe.
-
-VEILLE STRATEGY (CRITICAL):
-1. **Signal over Noise:** We prefer to keep a borderline relevant item than to miss a signal.
-2. **Subject vs. Publication Date:**
-   - KEEP recent articles even if they discuss older regulations (e.g., a "Reminder on MDR compliance" published yesterday IS a valid signal).
-   - The "date" field in your JSON must be the PUBLICATION DATE of the article/page, NOT the date of the law it discusses.
-3. **No Censorship:** Do not discard an item just because it's a "summary" or "analysis" by a law firm. These are valuable for intelligence.
+PHILOSOPHY:
+- MAXIMIZE RECALL: It is better to include a "Low Impact" item than to miss a signal.
+- USER FILTERS: The user has buttons to hide "News" or "Low" impact items. DO NOT pre-filter them unless it is completely irrelevant (e.g. spam, shoes, casinos).
+- SIGNAL DETECTION: Even a blog post mentioning a regulatory change is a valid signal.
 
 DECISION POLICY:
-1. **Date Filter:**
-   - Detect the publication/update date of the content.
-   - If the date is explicitly in {timeframe_label}, KEEP IT.
-   - If NO date is found but the content seems relevant and not obviously obsolete, KEEP IT (Precautionary Principle).
+1. **Date & Validity:**
+   - Keep items published/updated within {timeframe_label}.
+   - If no date is found, but the content seems relevant to the topic, KEEP IT.
 
-2. **Relevance:**
-   - KEEP: New laws, amendments, standards updates, draft guidances, enforcement actions (warning letters), recalls, AND expert commentary/news about these topics.
-   - EXCLUDE: Purely commercial product ads, irrelevant topics (e.g. financial news).
+2. **Relevance (Broad):**
+   - Does the text mention keywords related to "{topic}" AND ("Regulation", "Standard", "Guidance", "Compliance", "Safety", "Recall", "FDA", "ISO", "EU")?
+   - YES -> KEEP IT.
+   - NO -> Only then exclude it.
+
+3. **Categorization:**
+   - If it's a hard law/text -> "Regulation" / "Standard".
+   - If it's an article, blog, press release about a law -> "News".
+   - If it's a warning/recall -> "Enforcement".
+
+4. **Impact Scoring:**
+   - High: Direct new obligation.
+   - Medium: Drafts, guidance updates.
+   - Low: General news, reminders, opinion pieces. (KEEP THESE TOO!)
 
 OUTPUT FORMAT (STRICT JSON):
 {{
-  "executive_summary": "A concise summary of the activity found.",
+  "executive_summary": "A concise summary of the signals found.",
   "items": [
     {{
-      "title": "Title of the source",
-      "date": "YYYY-MM-DD (Publication Date)",
-      "source_name": "Source Name",
+      "title": "Title",
+      "date": "YYYY-MM-DD",
+      "source_name": "Source",
       "url": "URL",
-      "summary": "What is the info? (e.g. 'FDA published a reminder about...')",
+      "summary": "Summary of the signal.",
       "tags": ["Tag1", "Tag2"],
       "impact": "High/Medium/Low",
       "category": "Regulation/Standard/Guidance/Enforcement/News",
@@ -758,10 +738,9 @@ def page_admin():
         st.markdown("---")
         st.markdown("#### Performance")
         
+        # UI FIX: Passage au text_input (String) pour éviter le stepper +/-
         curr_max = app_config.get("max_search_results", "20")
         
-        # CORRECTIF UI: Retour au text_input simple pour ne pas avoir de stepper +/-
-        # Mais avec validation logique stricte en dessous
         new_max = st.text_input(
             "🎯 Target Sources Volume (Max to Scan)", 
             value=curr_max,
@@ -773,6 +752,7 @@ def page_admin():
         )
         
         if st.button("Update Volume"):
+            # Validation manuelle du chiffre
             if new_max.isdigit() and 1 <= int(new_max) <= 100:
                 update_app_config("max_search_results", new_max)
                 st.session_state["app_config"]["max_search_results"] = new_max
@@ -939,6 +919,7 @@ def page_mia():
                 </div>
                 """, unsafe_allow_html=True)
                 
+                # --- IMPACT ANALYSIS DYNAMIQUE ---
                 if show_impact:
                     with st.expander(f"⚡ Analyze Impact (Beta)", expanded=is_active):
                         default_context = st.session_state.get("mia_topic_val", topic) or ""
