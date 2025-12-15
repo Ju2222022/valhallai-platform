@@ -48,10 +48,13 @@ DEFAULT_DOMAINS = [
     "reuters.com", "raps.org", "medtechdive.com", "complianceandrisks.com"
 ]
 
+# NOUVEAUX PARAMÈTRES POUR LES PROVIDERS (V48)
 DEFAULT_APP_CONFIG = {
     "enable_impact_analysis": "TRUE",
     "cache_ttl_hours": "1",
-    "max_search_results": "20"
+    "max_search_results": "20",
+    "provider_google": "TRUE",  # Master Switch Google
+    "provider_tavily": "TRUE"   # Master Switch Tavily
 }
 
 def get_google_search_keys():
@@ -109,6 +112,11 @@ def update_app_config(key, value):
             cell = sheet.find(key)
             if cell:
                 sheet.update_cell(cell.row, 2, str(value))
+                st.cache_data.clear()
+                return True
+            else:
+                # Si la clé n'existe pas encore dans le sheet (mise à jour V48)
+                sheet.append_row([key, str(value)])
                 st.cache_data.clear()
                 return True
         except: pass
@@ -302,6 +310,11 @@ def extract_pdf_content_by_density(pdf_bytes, keywords, window_size=500):
     except: return "PDF Error"
 
 async def async_google_search(query, domains, max_results, date_restrict=None):
+    # V48 : Check si Google est activé par l'Admin
+    config = st.session_state.get("app_config", {})
+    if config.get("provider_google", "TRUE") == "FALSE":
+        return {"items": []}, "Google Search Disabled by Admin"
+
     api_key, cx = get_google_search_keys()
     if not api_key or not cx: return {"items": []}, "Google Search Keys Missing"
 
@@ -375,14 +388,18 @@ async def async_fetch_and_process_source(item, query_keywords, tavily_key):
                         return {"source": url, "type": "pdf", "title": title, "content": content}
         except: pass 
 
-    try:
-        if not tavily_key: return None
-        tavily = TavilyClient(api_key=tavily_key)
-        response = tavily.search(query=url, search_depth="basic", max_results=1)
-        if response and response.get('results'):
-            content = response['results'][0]['content']
-            return {"source": url, "type": "web", "title": title, "content": content[:8000]}
-    except: pass
+    # V48 : Check si Tavily est activé par l'Admin
+    config = st.session_state.get("app_config", {})
+    if config.get("provider_tavily", "TRUE") == "TRUE":
+        try:
+            if not tavily_key: return None
+            tavily = TavilyClient(api_key=tavily_key)
+            response = tavily.search(query=url, search_depth="basic", max_results=1)
+            if response and response.get('results'):
+                content = response['results'][0]['content']
+                return {"source": url, "type": "web", "title": title, "content": content[:8000]}
+        except: pass
+        
     return None
 
 @st.cache_data(show_spinner=False, ttl=3600)
@@ -397,7 +414,11 @@ def cached_async_mia_deep_search(query, date_restrict_code, max_results):
         async def run_pipeline():
             google_json, error = await async_google_search(query, doms, max_results, date_restrict=date_restrict_code)
             
-            if error: return [], 0, error
+            # Si erreur Google, on la remonte mais on ne bloque pas si c'est "Disabled"
+            if error and "Disabled" in error:
+                return [], 0, "DISABLED" # Code spécial
+            if error: 
+                return [], 0, error
             
             items = google_json.get('items', [])
             real_count = len(items)
@@ -414,7 +435,10 @@ def cached_async_mia_deep_search(query, date_restrict_code, max_results):
             
         results, raw_count, error_msg = loop.run_until_complete(run_pipeline())
         
-        if error_msg: return None, error_msg, 0
+        if error_msg == "DISABLED":
+            return "DISABLED", "Google Search Disabled", 0
+        if error_msg: 
+            return None, error_msg, 0
         
         clean_results = [r for r in results if r is not None]
         
@@ -538,10 +562,17 @@ def create_eva_prompt(ctx, doc):
     Structure: 1. Verdict, 2. Gap Table (Requirement|Status|Evidence|Missing), 3. Risks, 4. Recommendations."""
 
 def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
+    # MODIF V48: GESTION DU MODE SANS SOURCE
+    source_context = raw_search_data
+    if raw_search_data == "DISABLED" or not raw_search_data:
+        source_context = "NO EXTERNAL SOURCES AVAILABLE. USE YOUR INTERNAL KNOWLEDGE BASE (GPT-4o) TO GENERATE RELEVANT INSIGHTS FOR THIS TOPIC."
+
     return f"""
 ROLE: You are MIA, a Regulatory Scout responsible for gathering ANY potential intelligence signal.
 CONTEXT: Topic: "{topic}" | Markets: {', '.join(markets)} | Timeframe: {timeframe_label}
 PHILOSOPHY: MAXIMIZE RECALL. Include "Low Impact" items. Even blogs/news are signals.
+MODE: {"PURE KNOWLEDGE GENERATION" if raw_search_data == "DISABLED" else "SEARCH ANALYSIS"}
+
 OUTPUT FORMAT (STRICT JSON):
 {{
   "executive_summary": "Summary of signals.",
@@ -549,8 +580,8 @@ OUTPUT FORMAT (STRICT JSON):
     {{
       "title": "Title",
       "date": "YYYY-MM-DD",
-      "source_name": "Source",
-      "url": "URL",
+      "source_name": "Source (or AI Knowledge)",
+      "url": "URL (or 'Internal')",
       "summary": "Summary.",
       "tags": ["Tag1"],
       "impact": "High/Medium/Low",
@@ -560,7 +591,7 @@ OUTPUT FORMAT (STRICT JSON):
   ]
 }}
 RAW SEARCH DATA:
-{raw_search_data}
+{source_context}
 """
 
 def create_impact_analysis_prompt(prod_desc, item_content):
@@ -640,6 +671,30 @@ def page_admin():
                      if st.button("Yes", key=f"y_d_{i}"): remove_domain(i); st.rerun()
     with tc:
         app_config = st.session_state.get("app_config", get_app_config())
+        
+        # SECTION PROVIDERS (V48)
+        st.markdown("#### 🔌 Search Providers (Feature Flags)")
+        
+        c_p1, c_p2 = st.columns(2)
+        with c_p1:
+            curr_google = app_config.get("provider_google", "TRUE") == "TRUE"
+            new_google = st.toggle("Enable Google Search (Discovery)", value=curr_google)
+            if new_google != curr_google:
+                update_app_config("provider_google", "TRUE" if new_google else "FALSE")
+                st.session_state["app_config"]["provider_google"] = "TRUE" if new_google else "FALSE"
+                st.rerun()
+        
+        with c_p2:
+            curr_tavily = app_config.get("provider_tavily", "TRUE") == "TRUE"
+            new_tavily = st.toggle("Enable Tavily (Deep Read)", value=curr_tavily)
+            if new_tavily != curr_tavily:
+                update_app_config("provider_tavily", "TRUE" if new_tavily else "FALSE")
+                st.session_state["app_config"]["provider_tavily"] = "TRUE" if new_tavily else "FALSE"
+                st.rerun()
+
+        st.markdown("---")
+        st.markdown("#### Performance")
+        
         curr_max = app_config.get("max_search_results", "20")
         new_max = st.text_input("🎯 Target Sources Volume", value=curr_max)
         if st.button("Update Volume"):
@@ -712,34 +767,41 @@ def page_mia():
             clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
             query = f"regulations guidelines {topic} {', '.join(selected_markets)}"
             
+            # --- APPEL RECHERCHE (V48 - Fallback intégré) ---
             raw_data, error, raw_count = cached_async_mia_deep_search(query, date_restrict_code, max_res)
             
-            if not raw_data and error:
+            is_offline_mode = (raw_data == "DISABLED")
+            
+            # Gestion des erreurs
+            if not is_offline_mode and not raw_data and error:
                 st.error(f"🛑 Critical Search Error: {error}")
-            elif not raw_data:
-                st.error("Unknown error.")
-            else:
-                if raw_count == 0:
-                    st.warning(f"⚠️ No relevant updates found for '{topic}' in the selected timeframe ({selected_label}).")
-                    st.stop()
+                st.stop()
+            elif not is_offline_mode and raw_count == 0:
+                st.warning(f"⚠️ No updates found on Google. (Try enabling 'Pure GPT-4o Mode' by disabling Google in Admin to force generation).")
+                st.stop()
+            
+            # Si on arrive ici, soit on a des résultats, soit on est en mode "Offline"
+            st.session_state["mia_raw_count"] = raw_count if not is_offline_mode else 0
+            
+            if is_offline_mode:
+                st.info("🧠 Offline Mode Active: Generating insights from internal knowledge base (No Google Search).")
+
+            prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
+            json_str = cached_ai_generation(prompt, "gpt-4o", 0.1, json_mode=True)
+            
+            try:
+                parsed_data = json.loads(json_str)
+                if "items" not in parsed_data: parsed_data["items"] = []
+                parsed_data["source_count"] = raw_count if not is_offline_mode else 0
                 
-                st.session_state["mia_raw_count"] = raw_count
-                
-                prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
-                json_str = cached_ai_generation(prompt, "gpt-4o", 0.1, json_mode=True)
-                try:
-                    parsed_data = json.loads(json_str)
-                    if "items" not in parsed_data: parsed_data["items"] = []
-                    parsed_data["source_count"] = raw_count
-                    
-                    for item in parsed_data["items"]:
-                        if "impact" not in item: item["impact"] = "Low"
-                        if "category" not in item: item["category"] = "News"
-                        item["impact"] = item["impact"].capitalize()
-                        item["category"] = item["category"].capitalize()
-                    st.session_state["last_mia_results"] = parsed_data
-                    log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label}")
-                except Exception as e: st.error(f"Data processing failed: {str(e)}")
+                for item in parsed_data["items"]:
+                    if "impact" not in item: item["impact"] = "Low"
+                    if "category" not in item: item["category"] = "News"
+                    item["impact"] = item["impact"].capitalize()
+                    item["category"] = item["category"].capitalize()
+                st.session_state["last_mia_results"] = parsed_data
+                log_usage("MIA", str(uuid.uuid4()), topic, f"Mkts: {len(selected_markets)} | {selected_label} | Offline:{is_offline_mode}")
+            except Exception as e: st.error(f"Data processing failed: {str(e)}")
 
     results = st.session_state.get("last_mia_results")
     if results:
@@ -747,7 +809,11 @@ def page_mia():
         
         raw_c = results.get("source_count", st.session_state.get("mia_raw_count", 0))
         kept_c = len(results.get("items", []))
-        st.caption(f"🔍 MIA Intelligence: Analyzed {raw_c} sources → Kept {kept_c} relevant updates.")
+        
+        if raw_c == 0:
+            st.caption(f"🧠 MIA Intelligence: Generated from Internal Knowledge (Offline Mode)")
+        else:
+            st.caption(f"🔍 MIA Intelligence: Analyzed {raw_c} sources → Kept {kept_c} relevant updates.")
 
         if results.get("items"):
             with st.expander("📅 View Strategic Timeline", expanded=False):
@@ -808,95 +874,6 @@ def page_mia():
                         if safe_id in st.session_state["mia_impact_results"]:
                             st.markdown("---")
                             st.markdown(st.session_state["mia_impact_results"][safe_id])
-
-def page_olivia():
-    st.title("🤖 OlivIA Workspace")
-    markets, _ = get_markets()
-    c1, c2 = st.columns([2, 1])
-    with c1: 
-        desc = st.text_area("Product Definition", height=200, key="oli_desc")
-        uploads = st.file_uploader("📎 Attach Product Specs / Brief / Images (Optional)", type=['pdf', 'png', 'jpg', 'jpeg'], accept_multiple_files=True, key="oli_uploads")
-    with c2: 
-        safe_default = [markets[0]] if markets else []
-        ctrys = st.multiselect("Target Markets", markets, default=safe_default, key="oli_mkts")
-        st.write(""); gen = st.button("Generate Report", type="primary", key="oli_btn")
-    
-    if gen and desc:
-        with st.spinner("Analyzing (Multimodal)..."):
-            try:
-                pdf_context = ""
-                images_payload = []
-                if uploads:
-                    for up_file in uploads:
-                        if up_file.type == "application/pdf":
-                            txt = extract_text_from_pdf(up_file.read())
-                            pdf_context += f"\n--- CONTENT OF {up_file.name} ---\n{txt[:8000]}\n"
-                        elif up_file.type in ["image/png", "image/jpeg", "image/jpg"]:
-                            b64_img = base64.b64encode(up_file.getvalue()).decode('utf-8')
-                            images_payload.append(b64_img)
-
-                use_ds = any(x in str(ctrys) for x in ["EU","USA","China"])
-                ext_ctx = ""
-                if use_ds: 
-                    d, error, _ = cached_async_mia_deep_search(f"Regulations for {desc} in {ctrys}", "m12", 20)
-                    if d: ext_ctx = d
-                
-                sys_prompt = create_olivia_prompt(desc, ctrys)
-                final_text_prompt = sys_prompt
-                if ext_ctx: final_text_prompt += f"\n\nREGULATORY CONTEXT (EXTERNAL):\n{ext_ctx}"
-                if pdf_context: final_text_prompt += f"\n\nPRODUCT DOCUMENTS CONTEXT:\n{pdf_context}"
-                
-                messages = []
-                user_content = [{"type": "text", "text": final_text_prompt}]
-                for img_b64 in images_payload:
-                    user_content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}})
-                messages.append({"role": "user", "content": user_content})
-                
-                resp = cached_ai_generation(None, "gpt-4o", 0.1, messages=messages)
-                st.session_state["last_olivia_report"] = resp
-                st.session_state["last_olivia_id"] = str(uuid.uuid4())
-                log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)}")
-                st.toast("Analysis Ready!", icon="✅")
-            except Exception as e: st.error(f"Error: {str(e)}")
-
-    if st.session_state["last_olivia_report"]:
-        st.markdown("---")
-        st.success("✅ Analysis Generated")
-        st.markdown(st.session_state["last_olivia_report"])
-        st.markdown("---")
-        try:
-            safe_id = st.session_state.get('last_olivia_id', str(uuid.uuid4())[:8])
-            file_name_pdf = f"VALHALLAI_Report_{safe_id}.pdf"
-            pdf = generate_pdf_report("Regulatory Analysis Report", st.session_state["last_olivia_report"], safe_id)
-            if pdf: st.download_button("📥 Download PDF", pdf, file_name_pdf, "application/pdf")
-            else: st.error("PDF Generation failed.")
-        except Exception as e: st.error(f"PDF Error: {str(e)}")
-
-def page_eva():
-    st.title("🔍 EVA Workspace")
-    ctx = st.text_area("Context", value=st.session_state.get("last_olivia_report", ""), key="eva_ctx")
-    up = st.file_uploader("PDF", type="pdf", key="eva_up")
-    if st.button("Run Audit", type="primary", key="eva_btn") and up:
-        with st.spinner("Auditing..."):
-            try:
-                txt = extract_text_from_pdf(up.read())
-                resp = cached_ai_generation(create_eva_prompt(ctx, txt), "gpt-4o", 0.1)
-                st.session_state["last_eva_report"] = resp
-                st.session_state["last_eva_id"] = str(uuid.uuid4())
-                log_usage("EVA", st.session_state["last_eva_id"], f"File: {up.name}")
-                st.toast("Audit Complete!", icon="🔍")
-            except Exception as e: st.error(str(e))
-    
-    if st.session_state.get("last_eva_report"):
-        st.markdown("### Audit Results")
-        st.markdown(st.session_state["last_eva_report"])
-        st.markdown("---")
-        try:
-            safe_id = st.session_state.get('last_eva_id', str(uuid.uuid4())[:8])
-            file_name_pdf = f"VALHALLAI_Audit_{safe_id}.pdf"
-            pdf = generate_pdf_report("Compliance Audit Report", st.session_state["last_eva_report"], safe_id)
-            if pdf: st.download_button("📥 Download PDF", pdf, file_name_pdf, "application/pdf")
-        except: pass
 
 def page_dashboard():
     st.title("Dashboard")
