@@ -24,6 +24,10 @@ class ValhallaiPDF(FPDF):
         self.title_doc = title_doc
         self.report_id = report_id
         
+        # Marges standard
+        self.set_margins(15, 15, 15)
+        self.set_auto_page_break(auto=True, margin=15)
+        
         try:
             self.add_font("NotoSans", style="", fname=FONT_PATH)
             self.add_font("NotoSans", style="B", fname=FONT_BOLD_PATH)
@@ -42,18 +46,18 @@ class ValhallaiPDF(FPDF):
         
         self.set_draw_color(200, 169, 81)
         self.set_line_width(0.5)
-        self.line(10, 28, 200, 28)
+        self.line(15, 28, 195, 28)
         
         self.set_xy(100, 12)
         self.set_font(self.main_font, 'B', 10)
         self.set_text_color(0)
         clean_title = (self.title_doc[:45] + '...') if len(self.title_doc) > 45 else self.title_doc
-        self.cell(100, 6, clean_title, align='R', ln=1)
+        self.cell(95, 6, clean_title, align='R', ln=1)
         
         self.set_xy(100, 18)
         self.set_font(self.main_font, '', 8)
         self.set_text_color(128)
-        self.cell(100, 4, datetime.now().strftime("%Y-%m-%d"), align='R', ln=1)
+        self.cell(95, 4, datetime.now().strftime("%Y-%m-%d"), align='R', ln=1)
         self.ln(15)
 
     def footer(self):
@@ -62,7 +66,7 @@ class ValhallaiPDF(FPDF):
         self.set_text_color(128)
         self.cell(0, 10, f'ID: {self.report_id} | Page {self.page_no()}/{{nb}}', align='C')
 
-    # --- MOTEUR DE RENDU AMÉLIORÉ ---
+    # --- MOTEUR DE DESSIN MANUEL (LE SECRET POUR DES TABLEAUX PROPRES) ---
     def print_chapter_title(self, label, level=1):
         self.ln(4)
         if level == 1:
@@ -84,58 +88,57 @@ class ValhallaiPDF(FPDF):
     def print_list_item(self, text):
         self.set_font(self.main_font, '', 10)
         self.set_text_color(30, 30, 30)
-        
-        # Astuce : On imprime la puce et le texte dans la même MultiCell
-        # pour que l'indentation de la 2ème ligne soit alignée.
-        # \x95 est le caractère "Bullet point" standard
+        # On utilise un caractère unicode "Balle" et un espace insécable
         formatted_text = f"  {chr(149)}  {text}"
         self.multi_cell(0, 5, formatted_text)
         self.ln(1)
 
     def print_table_row(self, cells, is_header=False):
-        page_width = self.w - 20
-        col_width = page_width / max(len(cells), 1)
-        line_height = 5
-        
+        # 1. Configuration
+        page_width = self.w - 30 # 15+15 marge
+        if not cells: return
+        col_width = page_width / len(cells)
         self.set_font(self.main_font, 'B' if is_header else '', 9)
         
-        # 1. Calcul de la hauteur MAX de la ligne (pour alignement)
-        max_h = 0
+        # 2. Calcul de la hauteur max de cette ligne
+        # On simule l'écriture pour voir combien de lignes ça prendrait
+        line_height = 5
+        max_nb_lines = 1
         for cell in cells:
-            # On demande à FPDF combien de lignes prendrait ce texte
-            # get_string_width ne suffit pas car multi_cell wrap
-            # On simule via le nombre de caractères approx (méthode robuste)
-            nb_lines = len(self.multi_cell(col_width, line_height, cell, split_only=True))
-            h = nb_lines * line_height
-            if h > max_h: max_h = h
+            # split_only=True nous dit comment FPDF couperait le texte
+            lines = self.multi_cell(col_width, line_height, cell, split_only=True)
+            max_nb_lines = max(max_nb_lines, len(lines))
         
-        # Sécurité minimum
-        if max_h < line_height: max_h = line_height
-        
-        # Saut de page si nécessaire
-        if self.get_y() + max_h > self.page_break_trigger:
-            self.add_page()
+        row_height = max_nb_lines * line_height
 
-        # 2. Dessin des cellules
-        x_start = 10
+        # 3. Saut de page intelligent
+        if self.get_y() + row_height > self.page_break_trigger:
+            self.add_page()
+            # Si c'est un header, on le réimprime ? Non, simplifions.
+
+        # 4. Dessin réel
         y_start = self.get_y()
+        x_start = 15
         
         for cell in cells:
             self.set_xy(x_start, y_start)
+            # Fond gris pour le header
             if is_header:
                 self.set_fill_color(240, 240, 240)
-                self.multi_cell(col_width, line_height, cell, border=1, align='L', fill=True)
+                self.rect(x_start, y_start, col_width, row_height, 'DF')
             else:
-                # On dessine d'abord le cadre vide de la bonne hauteur
-                self.rect(x_start, y_start, col_width, max_h)
-                # Puis on écrit le texte dedans
-                self.multi_cell(col_width, line_height, cell, border=0, align='L')
+                self.set_fill_color(255, 255, 255)
+                self.rect(x_start, y_start, col_width, row_height, 'D')
             
+            # Texte
+            self.multi_cell(col_width, line_height, cell, border=0, align='L')
             x_start += col_width
             
-        self.set_y(y_start + max_h)
+        # On déplace le curseur en bas de la ligne la plus haute
+        self.set_y(y_start + row_height)
 
     def parse_markdown(self, md_text):
+        """Transforme le markdown en instructions de dessin FPDF"""
         lines = md_text.split('\n')
         in_table = False
         
@@ -143,10 +146,15 @@ class ValhallaiPDF(FPDF):
             line = line.strip()
             if not line: continue
             
-            # --- TABLEAUX ---
+            # --- DÉTECTION TABLEAU ---
             if '|' in line and len(line.split('|')) > 2:
-                if '---' in line: continue 
+                if '---' in line: continue # Ignorer la ligne de séparation
+                
+                # Nettoyage des cellules
                 cells = [c.strip() for c in line.split('|') if c.strip() != '']
+                # Parfois le split crée des vides au début/fin
+                if len(cells) < 1: continue
+
                 if not in_table:
                     self.print_table_row(cells, is_header=True)
                     in_table = True
@@ -163,9 +171,8 @@ class ValhallaiPDF(FPDF):
                 self.print_chapter_title(line.replace('## ', ''), 2)
             elif line.startswith('### '):
                 self.print_chapter_title(line.replace('### ', ''), 2)
-                
-            # --- LISTES (Fix Alignement) ---
-            # On traite les puces (*) et les numéros (1.) de la même façon visuelle
+            
+            # --- LISTES ---
             elif line.startswith('- ') or line.startswith('* '):
                 clean = line[2:].replace('**', '').replace('__', '')
                 self.print_list_item(clean)
@@ -181,7 +188,7 @@ class ValhallaiPDF(FPDF):
 def generate_pdf_report(title, content, report_id):
     try:
         pdf = ValhallaiPDF(title, report_id)
-        pdf.add_page()
+        pdf.add_page() # Ajout page initiale OBLIGATOIRE
         pdf.parse_markdown(content)
         return bytes(pdf.output())
     except Exception as e:
