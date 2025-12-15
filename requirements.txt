@@ -7,7 +7,4 @@ tavily-python
 plotly
 pandas
 aiohttp
-markdown
-xhtml2pdf
-reportlab
-html5lib
+fpdf2
