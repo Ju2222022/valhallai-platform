@@ -273,7 +273,7 @@ def init_session_state():
 init_session_state()
 
 # =============================================================================
-# 4. API & SEARCH & CACHING (ARCHITECTURE HYBRIDE ASYNCHRONE)
+# 4. API & SEARCH & CACHING (NOUVELLE ARCHITECTURE ASYNCHRONE)
 # =============================================================================
 def get_api_key(): return st.secrets.get("OPENAI_API_KEY") or os.getenv("OPENAI_API_KEY")
 def get_openai_client():
@@ -295,21 +295,23 @@ def extract_pdf_content_by_density(pdf_bytes, keywords, window_size=500):
         words = re.findall(r'\b\w+\b', full_text.lower())
         norm_keywords = [w.lower() for w in keywords if len(w) > 2]
         
-        if not norm_keywords: return full_text[:3000] # Fallback
+        if not norm_keywords: return full_text[:3000] # Fallback si pas de keywords
 
         best_score = -1
         best_window_text = ""
         
-        for i in range(0, len(words), 100):
+        # Algorithme de fenêtre glissante
+        for i in range(0, len(words), 100): # Saut de 100 pour perf
             end = min(i + window_size, len(words))
             window = words[i:end]
             score = sum(window.count(k) for k in norm_keywords)
             
             if score > best_score:
                 best_score = score
+                # Reconstruction approximative du texte original
                 snippet_start = full_text.lower().find(' '.join(words[i:i+5]).lower())
                 if snippet_start != -1:
-                    best_window_text = full_text[snippet_start : snippet_start + 4000]
+                    best_window_text = full_text[snippet_start : snippet_start + 4000] # 4000 chars context
         
         return best_window_text.strip() if best_window_text else full_text[:3000]
 
@@ -323,6 +325,9 @@ async def async_google_search(query, domains, max_results):
         return {"items": []}, "Google Search Keys Missing"
 
     query_str = quote_plus(query)
+    # Construction de la requête "site:A OR site:B..."
+    # Note: Google limite la longueur de la query. Si trop de domaines, on tronque.
+    # Pour la V2, on prend les 20 premiers domaines pour éviter l'erreur 414 URI Too Long
     safe_domains = domains[:20] 
     site_search = " OR ".join([f"site:{d}" for d in safe_domains])
     
@@ -359,13 +364,15 @@ async def async_fetch_and_process_source(item, query_keywords, tavily_key):
                         content = extract_pdf_content_by_density(pdf_bytes, query_keywords)
                         return {"source": url, "type": "pdf", "title": title, "content": content}
         except:
-            pass 
+            pass # Failover vers Web/Tavily
 
     # 2. CAS WEB (FALLBACK TAVILY)
+    # On utilise Tavily pour le scraping robuste des pages HTML complexes
     try:
         if not tavily_key: return None
+        # Appel synchrone encapsulé (rapide car 1 URL spécifique)
         tavily = TavilyClient(api_key=tavily_key)
-        response = tavily.search(query=url, search_depth="basic", max_results=1)
+        response = tavily.search(query=url, search_depth="basic", max_results=1) # On cherche l'URL pour extraire
         
         if response and response.get('results'):
             content = response['results'][0]['content']
@@ -379,12 +386,14 @@ async def async_fetch_and_process_source(item, query_keywords, tavily_key):
 @st.cache_data(show_spinner=False, ttl=3600)
 def cached_async_mia_deep_search(query, days_limit, max_results):
     try:
+        # 1. Setup
         doms, _ = get_domains()
         tavily_key = st.secrets.get("TAVILY_API_KEY")
         if not doms or not tavily_key: return None, "Configuration Error", 0
         
         keywords = re.findall(r'\b\w+\b', query.lower())
 
+        # 2. Google Discovery (Async Wrapper)
         async def run_pipeline():
             google_json, error = await async_google_search(query, doms, max_results)
             if error or not google_json: return [], error
@@ -393,6 +402,7 @@ def cached_async_mia_deep_search(query, days_limit, max_results):
             tasks = [async_fetch_and_process_source(i, keywords, tavily_key) for i in items]
             return await asyncio.gather(*tasks), None
 
+        # Gestion Event Loop Streamlit
         try:
             loop = asyncio.get_event_loop()
         except RuntimeError:
@@ -403,6 +413,7 @@ def cached_async_mia_deep_search(query, days_limit, max_results):
         
         if error: return None, error, 0
         
+        # 3. Formatting
         clean_results = [r for r in results if r is not None]
         raw_count = len(clean_results)
         
@@ -526,6 +537,7 @@ def create_eva_prompt(ctx, doc):
     Mission: Compliance Audit. Output: Strict English Markdown.
     Structure: 1. Verdict, 2. Gap Table (Requirement|Status|Evidence|Missing), 3. Risks, 4. Recommendations."""
 
+# --- NOUVEAU PROMPT MIA OPTIMISÉ ---
 def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     return f"""
 ROLE: You are MIA (Market Intelligence Agent), a specialized assistant for regulatory and standards monitoring (Regulatory Affairs / Regulatory Intelligence).
@@ -633,6 +645,37 @@ def get_logo_html(size=50):
     b64 = base64.b64encode(svg.encode('utf-8')).decode("utf-8")
     return f'<img src="data:image/svg+xml;base64,{b64}" style="vertical-align: middle; margin-right: 10px; display: inline-block;">'
 
+# --- THEME CSS ---
+def apply_theme():
+    st.markdown("""
+    <style>
+    @import url('https://fonts.googleapis.com/css2?family=Montserrat:wght@600;700&family=Inter:wght@400;600&display=swap');
+    html, body, [class*="css"] { font-family: 'Inter', sans-serif; }
+    h1, h2, h3 { font-family: 'Montserrat', sans-serif !important; color: #295A63 !important; }
+    
+    div.stButton > button:first-child { 
+        background-color: #295A63 !important; color: white !important; 
+        border-radius: 8px; font-weight: 600; width: 100%; border: none;
+    }
+    div.stButton > button:first-child:hover { background-color: #C8A951 !important; color: black !important; }
+    
+    .info-card { 
+        background-color: white; padding: 2rem; border-radius: 12px; border: 1px solid #E2E8F0; 
+        min-height: 220px; display: flex; flex-direction: column; justify-content: flex-start;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    }
+    .stTextInput > div > div:focus-within { border-color: #295A63 !important; box-shadow: 0 0 0 1px #295A63 !important; }
+    
+    .justified-text {
+        text-align: justify; line-height: 1.6; color: #2c3e50;
+        background-color: #f8f9fa; padding: 15px; border-radius: 8px; border-left: 4px solid #295A63;
+    }
+    
+    .mia-link a { color: #295A63 !important; text-decoration: none; font-weight: 700; font-size: 1.1em; border-bottom: 2px solid #C8A951; }
+    .mia-link a:hover { color: #C8A951 !important; background-color: #f0f0f0; }
+    </style>
+    """, unsafe_allow_html=True)
+
 # =============================================================================
 # 7. PAGES UI
 # =============================================================================
@@ -648,6 +691,7 @@ def page_admin():
 
     tm, td, tc = st.tabs(["🌍 Markets", "🕵️‍♂️ MIA Sources", "🎛️ MIA Settings"])
     
+    # 1. MARKETS (ALIGNE)
     with tm:
         mkts, _ = get_markets()
         with st.form("add_m"):
@@ -662,6 +706,7 @@ def page_admin():
                      st.write("Delete?")
                      if st.button("Yes", key=f"y_m_{i}"): remove_market(i); st.rerun()
     
+    # 2. SOURCES (ALIGNE)
     with td:
         doms, _ = get_domains()
         st.info("💡 Deep Search Sources.")
@@ -677,6 +722,7 @@ def page_admin():
                      st.write("Delete?")
                      if st.button("Yes", key=f"y_d_{i}"): remove_domain(i); st.rerun()
 
+    # 3. SETTINGS
     with tc:
         st.markdown("#### Feature Flags")
         app_config = st.session_state.get("app_config", get_app_config())
@@ -778,7 +824,9 @@ def page_mia():
         with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
             clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
             query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
-            raw_data, error, raw_count = cached_async_mia_deep_search(query, days=days_limit, max_results=max_res)
+            
+            # --- APPEL ASYNCHRONE V2 PRO ---
+            raw_data, error, raw_count = cached_async_mia_deep_search(query, days_limit, max_res)
             
             if not raw_data: st.error(f"Search failed: {error}")
             else:
