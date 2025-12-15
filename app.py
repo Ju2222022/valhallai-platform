@@ -324,32 +324,37 @@ async def async_google_search(query, domains, max_results):
     if not api_key or not cx:
         return {"items": []}, "Google Search Keys Missing"
 
-    # CORRECTION : On intègre les sites directement dans la requête 'q'
-    # Google n'accepte pas les booléens complexes dans le paramètre 'siteSearch'
+    # 1. Stratégie "Safe Zone" : Google limite les requêtes à ~32 mots-clés/opérateurs.
+    # Chaque domaine compte pour 1, chaque "OR" compte pour 1.
+    # 10 domaines = 20 tokens. Avec la requête utilisateur, on reste dans la zone verte.
+    safe_domains = domains[:10] 
     
-    # 1. On limite à 15-20 domaines pour ne pas dépasser la limite de longueur d'URL Google
-    safe_domains = domains[:18] 
-    
-    # 2. Construction de la chaîne booléenne : (site:A OR site:B OR site:C)
-    # Le mot clé "site:" doit être collé au domaine
+    # 2. Construction de la logique booléenne
     sites_str = " OR ".join([f"site:{d.strip()}" for d in safe_domains if d.strip()])
-    
-    # 3. Assemblage final : "Ma Recherche (site:A OR site:B)"
     final_query = f"{query} ({sites_str})"
-    encoded_query = quote_plus(final_query)
     
-    # 4. URL simplifiée (plus de paramètre siteSearch)
-    url = (f"https://www.googleapis.com/customsearch/v1?"
-           f"key={api_key}&cx={cx}&q={encoded_query}&num={max_results}")
+    # 3. Utilisation propre des paramètres (Pas de concaténation manuelle d'URL !)
+    base_url = "https://www.googleapis.com/customsearch/v1"
+    params = {
+        'key': api_key,
+        'cx': cx,
+        'q': final_query,
+        'num': max_results
+    }
 
     async with aiohttp.ClientSession() as session:
         try:
-            async with session.get(url) as response:
+            # On laisse aiohttp gérer l'encodage des paramètres (espaces, parenthèses, etc.)
+            async with session.get(base_url, params=params) as response:
                 if response.status == 200:
                     return await response.json(), None
                 else:
-                    # On lit le message d'erreur de Google pour le debug
-                    error_msg = await response.text()
+                    try:
+                        error_data = await response.json()
+                        error_msg = error_data.get('error', {}).get('message', await response.text())
+                    except:
+                        error_msg = await response.text()
+                    
                     return None, f"Google API Error: {response.status} - {error_msg}"
         except Exception as e:
             return None, f"Connection Error: {str(e)}"
