@@ -51,7 +51,7 @@ DEFAULT_DOMAINS = [
 DEFAULT_APP_CONFIG = {
     "enable_impact_analysis": "TRUE",
     "cache_ttl_hours": "1",
-    "max_search_results": "5"
+    "max_search_results": "20"  # Augmenté par défaut pour la V2
 }
 
 def get_google_search_keys():
@@ -295,38 +295,40 @@ def extract_pdf_content_by_density(pdf_bytes, keywords, window_size=500):
         words = re.findall(r'\b\w+\b', full_text.lower())
         norm_keywords = [w.lower() for w in keywords if len(w) > 2]
         
-        if not norm_keywords: return full_text[:3000] # Fallback si pas de keywords
+        if not norm_keywords: return full_text[:3000] 
 
         best_score = -1
         best_window_text = ""
         
-        # Algorithme de fenêtre glissante
-        for i in range(0, len(words), 100): # Saut de 100 pour perf
+        for i in range(0, len(words), 100):
             end = min(i + window_size, len(words))
             window = words[i:end]
             score = sum(window.count(k) for k in norm_keywords)
             
             if score > best_score:
                 best_score = score
-                # Reconstruction approximative du texte original
                 snippet_start = full_text.lower().find(' '.join(words[i:i+5]).lower())
                 if snippet_start != -1:
-                    best_window_text = full_text[snippet_start : snippet_start + 4000] # 4000 chars context
+                    best_window_text = full_text[snippet_start : snippet_start + 4000]
         
         return best_window_text.strip() if best_window_text else full_text[:3000]
 
     except Exception as e:
         return f"PDF Process Error: {str(e)}"
 
-# --- GOOGLE CUSTOM SEARCH ASYNCHRONE (PAGINATION) ---
-async def async_google_search(query, domains, max_results):
+# --- GOOGLE CUSTOM SEARCH ASYNCHRONE (AVEC DATERESTRICT) ---
+async def async_google_search(query, domains, max_results, date_restrict=None):
+    """
+    date_restrict format: 'd[number]', 'w[number]', 'm[number]', 'y[number]'
+    Ex: 'm12' for last 12 months.
+    """
     api_key, cx = get_google_search_keys()
     if not api_key or not cx:
         return {"items": []}, "Google Search Keys Missing"
 
     # 1. Stratégie "Large Filet"
     target_count = max(int(max_results), 20) 
-    target_count = min(target_count, 50) # Sécurité quota
+    target_count = min(target_count, 50) 
 
     # 2. Préparation de la requête
     safe_domains = domains[:8] 
@@ -348,6 +350,10 @@ async def async_google_search(query, domains, max_results):
             'num': num_items,
             'start': start_index
         }
+        # AJOUT DU FILTRE TEMPOREL NATIF GOOGLE
+        if date_restrict:
+            params['dateRestrict'] = date_restrict
+
         tasks.append(params)
 
     # 4. Exécution parallèle
@@ -376,7 +382,6 @@ async def async_google_search(query, domains, max_results):
         if not all_items and errors:
             return {"items": []}, f"Google Errors: {', '.join(set(errors))}"
             
-        # Dédoublonnage
         seen_links = set()
         unique_items = []
         for item in all_items:
@@ -407,7 +412,7 @@ async def async_fetch_and_process_source(item, query_keywords, tavily_key):
                         content = extract_pdf_content_by_density(pdf_bytes, query_keywords)
                         return {"source": url, "type": "pdf", "title": title, "content": content}
         except:
-            pass # Failover vers Web/Tavily
+            pass 
 
     # 2. CAS WEB (FALLBACK TAVILY)
     try:
@@ -425,7 +430,7 @@ async def async_fetch_and_process_source(item, query_keywords, tavily_key):
 
 # --- FONCTION PRINCIPALE DE RECHERCHE HYBRIDE ---
 @st.cache_data(show_spinner=False, ttl=3600)
-def cached_async_mia_deep_search(query, days_limit, max_results):
+def cached_async_mia_deep_search(query, date_restrict_code, max_results):
     try:
         doms, _ = get_domains()
         tavily_key = st.secrets.get("TAVILY_API_KEY")
@@ -434,14 +439,14 @@ def cached_async_mia_deep_search(query, days_limit, max_results):
         keywords = re.findall(r'\b\w+\b', query.lower())
 
         async def run_pipeline():
-            google_json, error = await async_google_search(query, doms, max_results)
+            # On passe le code de restriction temporelle à Google
+            google_json, error = await async_google_search(query, doms, max_results, date_restrict=date_restrict_code)
             if error or not google_json: return [], error
             
             items = google_json.get('items', [])
             tasks = [async_fetch_and_process_source(i, keywords, tavily_key) for i in items]
             return await asyncio.gather(*tasks), None
 
-        # Gestion Event Loop Streamlit
         try:
             loop = asyncio.get_event_loop()
         except RuntimeError:
@@ -452,7 +457,6 @@ def cached_async_mia_deep_search(query, days_limit, max_results):
         
         if error: return None, error, 0
         
-        # Formatting
         clean_results = [r for r in results if r is not None]
         raw_count = len(clean_results)
         
@@ -576,81 +580,50 @@ def create_eva_prompt(ctx, doc):
     Mission: Compliance Audit. Output: Strict English Markdown.
     Structure: 1. Verdict, 2. Gap Table (Requirement|Status|Evidence|Missing), 3. Risks, 4. Recommendations."""
 
-# --- PROMPT MIA (V33) ---
+# --- PROMPT MIA "VEILLEUR AVERTI" (V36 - PERMISSIF) ---
 def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     return f"""
-ROLE: You are MIA (Market Intelligence Agent), a specialized assistant for regulatory and standards monitoring (Regulatory Affairs / Regulatory Intelligence).
+ROLE: You are MIA (Market Intelligence Agent), a specialized assistant for Regulatory Intelligence (Veille Réglementaire).
 
 CONTEXT:
-- User monitoring topic: "{topic}"
-- Target markets/jurisdictions: {', '.join(markets)}
-- Selected timeframe for ARTICLE PUBLICATION: {timeframe_label}
+- Topic: "{topic}"
+- Markets: {', '.join(markets)}
+- Timeframe: {timeframe_label}
 
 GOAL:
-From the RAW SEARCH DATA, identify only the truly relevant regulatory / standards / guidance / enforcement / serious news items for this topic and timeframe, filter out noise, and return a structured JSON report.
+Scan the RAW SEARCH DATA and extract ANY relevant regulatory signal, news, or update published within the timeframe.
 
-DECISION POLICY
+VEILLE STRATEGY (CRITICAL):
+1. **Signal over Noise:** We prefer to keep a borderline relevant item than to miss a signal.
+2. **Subject vs. Publication Date:**
+   - KEEP recent articles even if they discuss older regulations (e.g., a "Reminder on MDR compliance" published yesterday IS a valid signal).
+   - The "date" field in your JSON must be the PUBLICATION DATE of the article/page, NOT the date of the law it discusses.
+3. **No Censorship:** Do not discard an item just because it's a "summary" or "analysis" by a law firm. These are valuable for intelligence.
 
-1. Filtering by publication date of the ARTICLE (the "signal")
-   a. For each item in RAW SEARCH DATA, detect the publication or last substantive update date of the article/page you are summarizing.
-   b. KEEP the item ONLY IF that article/update date clearly falls within {timeframe_label}.
-      - If the date is obviously older than the timeframe, EXCLUDE it.
-      - If you cannot find any date, EXCLUDE it unless it is clearly a very recent update from an official authority.
-   c. You may keep recent articles that discuss older regulations, as long as the article itself is recent.
+DECISION POLICY:
+1. **Date Filter:**
+   - Detect the publication/update date of the content.
+   - If the date is explicitly in {timeframe_label}, KEEP IT.
+   - If NO date is found but the content seems relevant and not obviously obsolete, KEEP IT (Precautionary Principle).
 
-2. Regulatory relevance vs noise
-   a. KEEP an item only if it mainly describes:
-      - Adoption/Amendment of a law, regulation, directive.
-      - Adoption/Revision of a technical standard (ISO, IEC).
-      - Publication of official guidance.
-      - Enforcement actions (warning letters, recalls).
-      - Official consultations.
-   b. EXCLUDE pure marketing, generic educational articles, opinion pieces without news.
-
-3. Temporal precision and timeline
-   a. The top-level field "date" is the publication date of the ARTICLE (the signal).
-   b. The "timeline" array captures key dates concerning the underlying legal act (Entry into Force, Application, etc.) if explicitly mentioned.
-
-4. Category classification
-   Priority: Enforcement > Regulation > Guidance > Standard > News
-
-   - "Regulation": Binding legal instruments.
-   - "Standard": Technical standards (ISO, IEC, etc.).
-   - "Guidance": Non-binding interpretative documents.
-   - "Enforcement": Warning letters, recalls, fines.
-   - "News": Informational content, press releases.
-
-5. Impact evaluation
-   Evaluate impact relative to the topic "{topic}".
-   - "High": New obligations, major revision, strong enforcement.
-   - "Medium": Clarifications, drafts, moderate enforcement.
-   - "Low": Peripheral relevance, general commentary.
+2. **Relevance:**
+   - KEEP: New laws, amendments, standards updates, draft guidances, enforcement actions (warning letters), recalls, AND expert commentary/news about these topics.
+   - EXCLUDE: Purely commercial product ads, irrelevant topics (e.g. financial news).
 
 OUTPUT FORMAT (STRICT JSON):
 {{
-  "executive_summary": "A 2-sentence summary of the activity found in this timeframe.",
+  "executive_summary": "A concise summary of the activity found.",
   "items": [
     {{
-      "title": "Title of the update",
-      "date": "YYYY-MM-DD (Publication date of the source)",
+      "title": "Title of the source",
+      "date": "YYYY-MM-DD (Publication Date)",
       "source_name": "Source Name",
       "url": "URL",
-      "summary": "1 sentence summary.",
+      "summary": "What is the info? (e.g. 'FDA published a reminder about...')",
       "tags": ["Tag1", "Tag2"],
       "impact": "High/Medium/Low",
-      "category": "Regulation",
-      "timeline": [
-        {{
-          "date": "YYYY-MM-DD",
-          "label": "Publication",
-          "desc": "Official Journal"
-        }},
-        {{
-          "date": "YYYY-MM-DD",
-          "label": "Entry into Force",
-          "desc": "Mandatory compliance"
-        }}
-      ]
+      "category": "Regulation/Standard/Guidance/Enforcement/News",
+      "timeline": []
     }}
   ]
 }}
@@ -776,25 +749,24 @@ def page_admin():
         st.markdown("---")
         st.markdown("#### Performance")
         
-        curr_max = app_config.get("max_search_results", "5")
+        curr_max = int(app_config.get("max_search_results", "20"))
         
-        # UI/UX : Libellé clair pour le mode hybride
-        new_max = st.text_input(
+        # UI/UX : Number Input strict [1-100]
+        new_max = st.number_input(
             "🎯 Target Sources Volume (Max to Scan)", 
+            min_value=1,
+            max_value=100,
             value=curr_max,
-            help="Controls the width of the Google Discovery net. \n\n"
+            help="Controls the Google Discovery breadth (Max: 100). \n\n"
                  "• PDFs are processed locally (Free).\n"
                  "• Complex Web pages use Tavily Fallback (Credits).\n"
-                 "• Higher value = Better intelligence, but potentially higher usage."
+                 "• Higher value = Deeper search, but potentially higher usage."
         )
         
         if st.button("Update Volume"):
-            if new_max.isdigit() and 1 <= int(new_max) <= 100:
-                update_app_config("max_search_results", new_max)
-                st.session_state["app_config"]["max_search_results"] = new_max
-                st.success("✅ Updated! Discovery net widened.")
-            else:
-                st.error("Enter a number between 1 and 100.")
+            update_app_config("max_search_results", new_max)
+            st.session_state["app_config"]["max_search_results"] = new_max
+            st.success("✅ Updated! Discovery net widened.")
         
         curr_ttl = app_config.get("cache_ttl_hours", "1")
         new_ttl = st.text_input("Cache Duration (Hours)", value=curr_ttl)
@@ -808,8 +780,8 @@ def page_mia():
     
     app_config = st.session_state.get("app_config", get_app_config())
     show_impact = app_config.get("enable_impact_analysis", "TRUE") == "TRUE"
-    try: max_res = int(app_config.get("max_search_results", 5))
-    except: max_res = 5
+    try: max_res = int(app_config.get("max_search_results", 20))
+    except: max_res = 20
 
     watchlists = get_watchlists()
     wl_names = ["-- New Watch --"] + [w["name"] for w in watchlists]
@@ -845,9 +817,14 @@ def page_mia():
         if not default_mkts and markets: default_mkts = [markets[0]]
         selected_markets = st.multiselect("🌍 Markets", markets, default=default_mkts)
     with col3:
-        timeframe_map = {"⚡ Last 30 Days": 30, "📅 Last 12 Months": 365, "🏛️ Last 3 Years": 1095}
-        selected_label = st.selectbox("⏱️ Timeframe", list(timeframe_map.keys()), index=st.session_state.get("mia_timeframe_index", 1))
-        days_limit = timeframe_map[selected_label]
+        # Mapping UI -> Google DateRestrict Codes
+        timeframe_options = {
+            "⚡ Last 30 Days": "d30",
+            "📅 Last 12 Months": "m12",
+            "🏛️ Last 3 Years": "y3"
+        }
+        selected_label = st.selectbox("⏱️ Timeframe", list(timeframe_options.keys()), index=st.session_state.get("mia_timeframe_index", 1))
+        date_restrict_code = timeframe_options[selected_label]
 
     launch_label = f"🚀 Launch {selected_wl}" if selected_wl != "-- New Watch --" else "🚀 Launch Monitoring"
     
@@ -863,16 +840,16 @@ def page_mia():
                         st.toast("Saved!", icon="💾")
                         st.cache_data.clear()
                         
-        # INFO METRIQUE DISCRETE
         if launch: st.session_state["mia_raw_count"] = 0 
 
     if launch and topic:
         with st.spinner(f"📡 MIA is scanning... ({selected_label})"):
             clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
-            query = f"New regulations guidelines for {topic} in {', '.join(selected_markets)} released in the {clean_timeframe}"
+            query = f"regulations guidelines {topic} {', '.join(selected_markets)}"
             
-            # --- APPEL ASYNCHRONE V2 PRO ---
-            raw_data, error, raw_count = cached_async_mia_deep_search(query, days_limit, max_res)
+            # --- APPEL HYBRIDE AVEC FILTRE TEMPOREL NATIF ---
+            # Le paramètre date_restrict_code (d30, m12...) force Google à ne renvoyer QUE du récent.
+            raw_data, error, raw_count = cached_async_mia_deep_search(query, date_restrict_code, max_res)
             
             if not raw_data: st.error(f"Search failed: {error}")
             else:
@@ -896,7 +873,6 @@ def page_mia():
     if results:
         st.markdown("### 📋 Monitoring Report")
         
-        # Info métrique
         raw_c = st.session_state.get("mia_raw_count", 0)
         kept_c = len(results.get("items", []))
         st.caption(f"🔍 MIA Intelligence: Analyzed {raw_c} sources → Kept {kept_c} relevant updates.")
@@ -954,7 +930,6 @@ def page_mia():
                 </div>
                 """, unsafe_allow_html=True)
                 
-                # --- IMPACT ANALYSIS DYNAMIQUE ---
                 if show_impact:
                     with st.expander(f"⚡ Analyze Impact (Beta)", expanded=is_active):
                         default_context = st.session_state.get("mia_topic_val", topic) or ""
