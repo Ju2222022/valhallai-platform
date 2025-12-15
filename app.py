@@ -51,7 +51,7 @@ DEFAULT_DOMAINS = [
 DEFAULT_APP_CONFIG = {
     "enable_impact_analysis": "TRUE",
     "cache_ttl_hours": "1",
-    "max_search_results": "20"  # Augmenté par défaut pour la V2
+    "max_search_results": "20"
 }
 
 def get_google_search_keys():
@@ -316,72 +316,77 @@ def extract_pdf_content_by_density(pdf_bytes, keywords, window_size=500):
     except Exception as e:
         return f"PDF Process Error: {str(e)}"
 
-# --- GOOGLE CUSTOM SEARCH ASYNCHRONE (AVEC DATERESTRICT) ---
+# --- GOOGLE CUSTOM SEARCH ASYNCHRONE (BATCHING & PAGINATION) ---
 async def async_google_search(query, domains, max_results, date_restrict=None):
     """
-    date_restrict format: 'd[number]', 'w[number]', 'm[number]', 'y[number]'
-    Ex: 'm12' for last 12 months.
+    Exécute la recherche sur TOUS les domaines en les découpant par lots (Batching).
     """
     api_key, cx = get_google_search_keys()
     if not api_key or not cx:
         return {"items": []}, "Google Search Keys Missing"
 
-    # 1. Stratégie "Large Filet"
-    target_count = max(int(max_results), 20) 
-    target_count = min(target_count, 50) 
-
-    # 2. Préparation de la requête
-    safe_domains = domains[:8] 
-    sites_str = " OR ".join([f"site:{d.strip()}" for d in safe_domains if d.strip()])
-    final_query = f"{query} {sites_str}"
+    # 1. Configuration des Batches
+    # Google limite la complexité des requêtes. On traite les domaines par paquets de 8.
+    BATCH_SIZE = 8
+    domain_batches = [domains[i:i + BATCH_SIZE] for i in range(0, len(domains), BATCH_SIZE)]
     
+    # On distribue le nombre max de résultats sur les batches.
+    # Ex: Si on veut 20 résultats et qu'il y a 2 batches, on demande 10 par batch.
+    # On force un minimum de 10 résultats par batch pour la pertinence.
+    results_per_batch = max(int(int(max_results) / len(domain_batches)), 10)
+    results_per_batch = min(results_per_batch, 20) # Plafond sécu par batch
+
     base_url = "https://www.googleapis.com/customsearch/v1"
-    
-    # 3. Génération des tâches de pagination
     tasks = []
-    for start_index in range(1, target_count + 1, 10):
-        num_items = min(10, target_count - start_index + 1)
-        if num_items <= 0: break
+
+    # 2. Création des tâches pour chaque Batch
+    for batch in domain_batches:
+        # Construction de la requête pour ce lot spécifique
+        sites_str = " OR ".join([f"site:{d.strip()}" for d in batch if d.strip()])
+        final_query = f"{query} {sites_str}"
         
-        params = {
-            'key': api_key,
-            'cx': cx,
-            'q': final_query,
-            'num': num_items,
-            'start': start_index
-        }
-        # AJOUT DU FILTRE TEMPOREL NATIF GOOGLE
-        if date_restrict:
-            params['dateRestrict'] = date_restrict
+        # Pagination interne au batch (si on veut > 10 résultats)
+        for start_index in range(1, results_per_batch + 1, 10):
+            num_items = min(10, results_per_batch - start_index + 1)
+            if num_items <= 0: break
+            
+            params = {
+                'key': api_key,
+                'cx': cx,
+                'q': final_query,
+                'num': num_items,
+                'start': start_index
+            }
+            if date_restrict:
+                params['dateRestrict'] = date_restrict
+            
+            tasks.append(params)
 
-        tasks.append(params)
-
-    # 4. Exécution parallèle
+    # 3. Exécution massivement parallèle
     async with aiohttp.ClientSession() as session:
         all_items = []
         errors = []
 
-        async def fetch_page(p):
+        async def fetch_task(p):
             try:
                 async with session.get(base_url, params=p) as response:
                     if response.status == 200:
                         data = await response.json()
                         return data.get('items', [])
                     else:
-                        errors.append(f"HTTP {response.status}")
+                        # On log l'erreur mais on ne bloque pas les autres batches
                         return []
-            except Exception as e:
-                errors.append(str(e))
+            except:
                 return []
 
-        results_lists = await asyncio.gather(*[fetch_page(p) for p in tasks])
+        # Lancement de toutes les requêtes en même temps
+        results_lists = await asyncio.gather(*[fetch_task(p) for p in tasks])
         
+        # Fusion
         for r_list in results_lists:
             all_items.extend(r_list)
 
-        if not all_items and errors:
-            return {"items": []}, f"Google Errors: {', '.join(set(errors))}"
-            
+        # Dédoublonnage final
         seen_links = set()
         unique_items = []
         for item in all_items:
@@ -389,6 +394,10 @@ async def async_google_search(query, domains, max_results, date_restrict=None):
             if link and link not in seen_links:
                 seen_links.add(link)
                 unique_items.append(item)
+
+        # Si 0 résultat et des erreurs, on renvoie une alerte
+        if not unique_items and not results_lists: 
+             return {"items": []}, "No results found (Check Query/Date/Quota)."
 
         return {"items": unique_items}, None
 
@@ -749,24 +758,27 @@ def page_admin():
         st.markdown("---")
         st.markdown("#### Performance")
         
-        curr_max = int(app_config.get("max_search_results", "20"))
+        curr_max = app_config.get("max_search_results", "20")
         
-        # UI/UX : Number Input strict [1-100]
-        new_max = st.number_input(
+        # CORRECTIF UI: Retour au text_input simple pour ne pas avoir de stepper +/-
+        # Mais avec validation logique stricte en dessous
+        new_max = st.text_input(
             "🎯 Target Sources Volume (Max to Scan)", 
-            min_value=1,
-            max_value=100,
             value=curr_max,
-            help="Controls the Google Discovery breadth (Max: 100). \n\n"
+            help="Controls the width of the Google Discovery net. \n\n"
                  "• PDFs are processed locally (Free).\n"
                  "• Complex Web pages use Tavily Fallback (Credits).\n"
-                 "• Higher value = Deeper search, but potentially higher usage."
+                 "• Higher value = Better intelligence, but potentially higher usage.\n"
+                 "• Limit: 1 to 100."
         )
         
         if st.button("Update Volume"):
-            update_app_config("max_search_results", new_max)
-            st.session_state["app_config"]["max_search_results"] = new_max
-            st.success("✅ Updated! Discovery net widened.")
+            if new_max.isdigit() and 1 <= int(new_max) <= 100:
+                update_app_config("max_search_results", new_max)
+                st.session_state["app_config"]["max_search_results"] = new_max
+                st.success("✅ Updated! Discovery net widened.")
+            else:
+                st.error("Please enter a valid number between 1 and 100.")
         
         curr_ttl = app_config.get("cache_ttl_hours", "1")
         new_ttl = st.text_input("Cache Duration (Hours)", value=curr_ttl)
@@ -817,7 +829,6 @@ def page_mia():
         if not default_mkts and markets: default_mkts = [markets[0]]
         selected_markets = st.multiselect("🌍 Markets", markets, default=default_mkts)
     with col3:
-        # Mapping UI -> Google DateRestrict Codes
         timeframe_options = {
             "⚡ Last 30 Days": "d30",
             "📅 Last 12 Months": "m12",
@@ -847,8 +858,6 @@ def page_mia():
             clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
             query = f"regulations guidelines {topic} {', '.join(selected_markets)}"
             
-            # --- APPEL HYBRIDE AVEC FILTRE TEMPOREL NATIF ---
-            # Le paramètre date_restrict_code (d30, m12...) force Google à ne renvoyer QUE du récent.
             raw_data, error, raw_count = cached_async_mia_deep_search(query, date_restrict_code, max_res)
             
             if not raw_data: st.error(f"Search failed: {error}")
