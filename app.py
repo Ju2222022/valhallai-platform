@@ -324,15 +324,23 @@ async def async_google_search(query, domains, max_results):
     if not api_key or not cx:
         return {"items": []}, "Google Search Keys Missing"
 
-    query_str = quote_plus(query)
-    # Construction de la requête "site:A OR site:B..."
-    # Note: Google limite la longueur de la query. Si trop de domaines, on tronque.
-    # Pour la V2, on prend les 20 premiers domaines pour éviter l'erreur 414 URI Too Long
-    safe_domains = domains[:20] 
-    site_search = " OR ".join([f"site:{d}" for d in safe_domains])
+    # CORRECTION : On intègre les sites directement dans la requête 'q'
+    # Google n'accepte pas les booléens complexes dans le paramètre 'siteSearch'
     
+    # 1. On limite à 15-20 domaines pour ne pas dépasser la limite de longueur d'URL Google
+    safe_domains = domains[:18] 
+    
+    # 2. Construction de la chaîne booléenne : (site:A OR site:B OR site:C)
+    # Le mot clé "site:" doit être collé au domaine
+    sites_str = " OR ".join([f"site:{d.strip()}" for d in safe_domains if d.strip()])
+    
+    # 3. Assemblage final : "Ma Recherche (site:A OR site:B)"
+    final_query = f"{query} ({sites_str})"
+    encoded_query = quote_plus(final_query)
+    
+    # 4. URL simplifiée (plus de paramètre siteSearch)
     url = (f"https://www.googleapis.com/customsearch/v1?"
-           f"key={api_key}&cx={cx}&q={query_str}&num={max_results}&siteSearch={quote_plus(site_search)}")
+           f"key={api_key}&cx={cx}&q={encoded_query}&num={max_results}")
 
     async with aiohttp.ClientSession() as session:
         try:
@@ -340,7 +348,9 @@ async def async_google_search(query, domains, max_results):
                 if response.status == 200:
                     return await response.json(), None
                 else:
-                    return None, f"Google API Error: {response.status}"
+                    # On lit le message d'erreur de Google pour le debug
+                    error_msg = await response.text()
+                    return None, f"Google API Error: {response.status} - {error_msg}"
         except Exception as e:
             return None, f"Connection Error: {str(e)}"
 
