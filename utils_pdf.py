@@ -2,6 +2,7 @@ import os
 import urllib.request
 from datetime import datetime
 from fpdf import FPDF, HTMLMixin
+from fpdf.fonts import FontFace # Important pour le style
 import markdown
 
 # --- GESTION DES POLICES ---
@@ -18,7 +19,6 @@ def ensure_fonts_exist():
         try: urllib.request.urlretrieve(FONT_BOLD_URL, FONT_BOLD_PATH)
         except: pass
 
-# On utilise HTMLMixin pour améliorer le rendu HTML
 class ValhallaiPDF(FPDF, HTMLMixin):
     def __init__(self, title_doc, report_id):
         ensure_fonts_exist()
@@ -34,6 +34,7 @@ class ValhallaiPDF(FPDF, HTMLMixin):
             self.main_font = "Arial"
 
     def header(self):
+        # En-tête propre sans HTML
         self.set_font(self.main_font, 'B', 20)
         self.set_text_color(41, 90, 99) # Vert Valhallai
         self.cell(0, 10, 'VALHALLAI', ln=1)
@@ -46,6 +47,7 @@ class ValhallaiPDF(FPDF, HTMLMixin):
         self.set_line_width(0.5)
         self.line(10, 28, 200, 28)
         
+        # Meta-data à droite
         self.set_xy(100, 12)
         self.set_font(self.main_font, 'B', 10)
         self.set_text_color(0)
@@ -73,38 +75,36 @@ def generate_pdf_report(title, content_markdown, report_id):
         extensions=['tables', 'fenced_code', 'sane_lists']
     )
     
-    # 2. STYLING CSS POUR FPDF2 (CORRECTIF V43)
-    # On force la couleur des listes (li) en noir (#333) pour éviter le rouge par défaut.
-    # On ajoute des balises <font> globales.
-    styled_html = f"""
-    <style>
-        h1 {{ color: #295A63; font-size: 24px; font-weight: bold; margin-bottom: 10px; }}
-        h2 {{ color: #295A63; font-size: 20px; font-weight: bold; margin-top: 20px; border-bottom: 1px solid #ccc; }}
-        h3 {{ color: #1A3C42; font-size: 16px; font-weight: bold; margin-top: 15px; }}
-        p {{ color: #333333; font-size: 11px; line-height: 1.5; text-align: justify; }}
-        
-        /* CORRECTION LISTES (V43) */
-        ul {{ color: #333333; margin-left: 15px; }}
-        ol {{ color: #333333; margin-left: 15px; }}
-        li {{ color: #333333; margin-bottom: 5px; }}
-        
-        /* CORRECTION TABLEAUX */
-        table {{ border: 1px solid #ddd; width: 100%; }}
-        th {{ background-color: #f2f2f2; font-weight: bold; color: #295A63; padding: 5px; border: 1px solid #ccc; }}
-        td {{ padding: 5px; border: 1px solid #ccc; color: #333; }}
-    </style>
+    # 2. HACK: Forcer les bordures des tableaux en HTML
+    # Markdown ne met pas border="1", donc FPDF ne dessine pas les lignes par défaut.
+    html_content = html_content.replace('<table>', '<table border="1" width="100%" cellpadding="5">')
     
-    <font face="{pdf.main_font}" color="#333333">
-        {html_content}
-    </font>
-    """
+    # 3. DÉFINITION DES STYLES (C'est ici qu'on corrige les couleurs et polices)
+    # Plus de CSS texte, on utilise des objets FontFace que FPDF comprend.
+    valhallai_green = (41, 90, 99)
+    dark_grey = (50, 50, 50)
     
-    pdf.set_font(pdf.main_font, '', 11)
+    tag_styles = {
+        "h1": FontFace(color=valhallai_green, emphasis="B", size_pt=18),
+        "h2": FontFace(color=valhallai_green, emphasis="B", size_pt=14),
+        "h3": FontFace(color=(26, 60, 66), emphasis="B", size_pt=12),
+        "p": FontFace(color=dark_grey, size_pt=10),
+        "li": FontFace(color=dark_grey, size_pt=10), # Force les puces en gris foncé (plus de rouge)
+        "table": FontFace(size_pt=9), # Tableaux un peu plus petits pour tenir
+        "th": FontFace(color=valhallai_green, emphasis="B", fill_color=(240, 240, 240)), # Entête tableau
+    }
     
-    # Utilisation de write_html avec gestion des styles
+    # 4. Écriture
+    pdf.set_font(pdf.main_font, '', 10)
+    
     try:
-        pdf.write_html(styled_html)
+        # table_line_separators=True active le dessin des lignes de tableau
+        pdf.write_html(html_content, tag_styles=tag_styles, table_line_separators=True)
     except Exception as e:
-        pdf.multi_cell(0, 6, f"Error rendering HTML: {str(e)}\n\nRaw:\n{content_markdown}")
+        pdf.set_text_color(255, 0, 0)
+        pdf.multi_cell(0, 5, f"Erreur PDF: {str(e)}")
+        # En cas de crash HTML, on imprime le texte brut pour ne pas perdre l'info
+        pdf.set_text_color(0)
+        pdf.multi_cell(0, 5, content_markdown)
 
     return bytes(pdf.output())
