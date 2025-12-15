@@ -387,6 +387,7 @@ async def async_fetch_and_process_source(item, query_keywords, tavily_key):
     
     headers = {'User-Agent': 'Mozilla/5.0 (compatible; MIA-Bot/1.0)'}
     
+    # 1. CAS PDF
     if url.lower().endswith('.pdf'):
         try:
             timeout = aiohttp.ClientTimeout(total=15)
@@ -398,6 +399,7 @@ async def async_fetch_and_process_source(item, query_keywords, tavily_key):
                         return {"source": url, "type": "pdf", "title": title, "content": content}
         except: pass 
 
+    # 2. CAS WEB (FALLBACK TAVILY)
     try:
         if not tavily_key: return None
         tavily = TavilyClient(api_key=tavily_key)
@@ -452,7 +454,7 @@ def cached_async_mia_deep_search(query, date_restrict_code, max_results):
 def cached_ai_generation(prompt, model, temp, json_mode=False):
     client = get_openai_client()
     if not client: return None
-    # FORCE GPT-4o POUR LA PERFORMANCE (MODIF V39)
+    # FORCE GPT-4o
     actual_model = "gpt-4o" 
     kwargs = {"model": actual_model, "messages": [{"role": "user", "content": prompt}], "temperature": temp}
     if json_mode: kwargs["response_format"] = {"type": "json_object"}
@@ -516,7 +518,6 @@ def display_timeline(items):
     )
     
     start_view = now - timedelta(days=365)
-    # MODIF V39 : +3 ans (1095 jours)
     end_view = now + timedelta(days=1095)
     fig.update_xaxes(range=[start_view, end_view], showgrid=True, gridcolor="#eee", zeroline=False)
     fig.update_yaxes(visible=False, showticklabels=False)
@@ -563,7 +564,7 @@ def create_eva_prompt(ctx, doc):
     Mission: Compliance Audit. Output: Strict English Markdown.
     Structure: 1. Verdict, 2. Gap Table (Requirement|Status|Evidence|Missing), 3. Risks, 4. Recommendations."""
 
-# --- PROMPT MIA "SCOUT" (V38 - RADICAL RECALL) ---
+# --- PROMPT MIA "SCOUT" (V38) ---
 def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
     return f"""
 ROLE: You are MIA, a Regulatory Scout responsible for gathering ANY potential intelligence signal (Veille Réglementaire).
@@ -800,7 +801,6 @@ def page_mia():
     markets, _ = get_markets()
     col1, col2, col3 = st.columns([2, 2, 1], gap="large")
     with col1: 
-        # MODIF V39 : Placeholder mis à jour
         topic = st.text_input("🔎 Watch Topic / Product", value=st.session_state.get("mia_topic_val", ""), placeholder="e.g. lithium batteries for consumer goods")
     with col2: 
         default_mkts = [m for m in st.session_state.get("mia_markets_val", []) if m in markets]
@@ -828,7 +828,7 @@ def page_mia():
                         save_watchlist(new_wl_name, topic, selected_markets, selected_label)
                         st.toast("Saved!", icon="💾")
                         st.cache_data.clear()
-                        st.rerun() # MODIF V39 : Force Refresh
+                        st.rerun() # Refresh immédiat
                         
         if launch: st.session_state["mia_raw_count"] = 0 
 
@@ -843,9 +843,8 @@ def page_mia():
             else:
                 st.session_state["mia_raw_count"] = raw_count
                 
-                # MODIF V39 : Prompt V38 (Scout) pour plus de résultats
                 prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
-                # MODIF V39 : Utilisation explicite de GPT-4o
+                # FORCE GPT-4o
                 json_str = cached_ai_generation(prompt, "gpt-4o", 0.1, json_mode=True)
                 try:
                     parsed_data = json.loads(json_str)
@@ -929,7 +928,6 @@ def page_mia():
                             st.session_state["active_analysis_id"] = safe_id
                             with st.spinner("Evaluating..."):
                                 ia_prompt = create_impact_analysis_prompt(prod_ctx, f"{item['title']}: {item['summary']}")
-                                # MODIF V39 : Utilisation explicite de GPT-4o
                                 ia_res = cached_ai_generation(ia_prompt, "gpt-4o", 0.1)
                                 st.session_state["mia_impact_results"][safe_id] = ia_res
                                 st.rerun()
@@ -937,6 +935,31 @@ def page_mia():
                         if safe_id in st.session_state["mia_impact_results"]:
                             st.markdown("---")
                             st.markdown(st.session_state["mia_impact_results"][safe_id])
+
+def page_dashboard():
+    st.title("Dashboard")
+    st.markdown(f"<span class='sub-text'>{config.APP_SLOGAN}</span>", unsafe_allow_html=True)
+    st.markdown("###")
+    c1, c2, c3 = st.columns(3)
+    
+    with c1: 
+        st.markdown(f"""<div class="info-card"><h3>🤖 OlivIA</h3><p class='sub-text'>{config.AGENTS['olivia']['description']}</p></div>""", unsafe_allow_html=True)
+        st.write("")
+        if st.button("Launch OlivIA ->"): 
+            st.session_state["current_page"] = "OlivIA"
+            st.rerun()
+    with c2: 
+        st.markdown(f"""<div class="info-card"><h3>🔍 EVA</h3><p class='sub-text'>{config.AGENTS['eva']['description']}</p></div>""", unsafe_allow_html=True)
+        st.write("")
+        if st.button("Launch EVA ->"): 
+            st.session_state["current_page"] = "EVA"
+            st.rerun()
+    with c3: 
+        st.markdown(f"""<div class="info-card"><h3>{config.AGENTS['mia']['icon']} {config.AGENTS['mia']['name']}</h3><p class='sub-text'>{config.AGENTS['mia']['description']}</p></div>""", unsafe_allow_html=True)
+        st.write("")
+        if st.button("Launch MIA ->"): 
+            st.session_state["current_page"] = "MIA"
+            st.rerun()
 
 def render_sidebar():
     with st.sidebar:
