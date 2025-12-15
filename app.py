@@ -308,7 +308,7 @@ def extract_pdf_content_by_density(pdf_bytes, keywords, window_size=500):
     except: return "PDF Error"
 
 async def async_google_search(query, domains, max_results, date_restrict=None):
-    # V48+ : Check Master Switch
+    # V48 : Check si Google est activé par l'Admin
     config = st.session_state.get("app_config", {})
     if config.get("provider_google", "TRUE") == "FALSE":
         return {"items": []}, "Google Search Disabled by Admin"
@@ -386,7 +386,7 @@ async def async_fetch_and_process_source(item, query_keywords, tavily_key):
                         return {"source": url, "type": "pdf", "title": title, "content": content}
         except: pass 
 
-    # V48+ : Check Tavily Switch
+    # V48 : Check si Tavily est activé par l'Admin
     config = st.session_state.get("app_config", {})
     if config.get("provider_tavily", "TRUE") == "TRUE":
         try:
@@ -412,9 +412,9 @@ def cached_async_mia_deep_search(query, date_restrict_code, max_results):
         async def run_pipeline():
             google_json, error = await async_google_search(query, doms, max_results, date_restrict=date_restrict_code)
             
-            # V48+ : Gestion Disabled sans erreur fatale
+            # Si erreur Google, on la remonte mais on ne bloque pas si c'est "Disabled"
             if error and "Disabled" in error:
-                return [], 0, "DISABLED"
+                return [], 0, "DISABLED" # Code spécial
             if error: 
                 return [], 0, error
             
@@ -560,7 +560,6 @@ def create_eva_prompt(ctx, doc):
     Structure: 1. Verdict, 2. Gap Table (Requirement|Status|Evidence|Missing), 3. Risks, 4. Recommendations."""
 
 def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
-    # MODIF V48+ : Context "Sans Source"
     source_context = raw_search_data
     if raw_search_data == "DISABLED" or not raw_search_data:
         source_context = "NO EXTERNAL SOURCES AVAILABLE. USE YOUR INTERNAL KNOWLEDGE BASE (GPT-4o) TO GENERATE RELEVANT INSIGHTS FOR THIS TOPIC."
@@ -628,7 +627,7 @@ def apply_theme():
     """, unsafe_allow_html=True)
 
 # =============================================================================
-# 7. PAGES UI
+# 7. PAGES UI (DASHBOARD, OLIVIA, EVA, MIA, ADMIN)
 # =============================================================================
 def page_admin():
     st.title("⚙️ Admin Console"); st.markdown("---")
@@ -671,7 +670,7 @@ def page_admin():
         app_config = st.session_state.get("app_config", get_app_config())
         
         # --- SECTION RESTAURÉE V49.0 ---
-        st.markdown("#### ⚡ Features & Providers")
+        st.markdown("#### 🔌 Search Providers (Feature Flags)")
         
         # PROVIDERS
         c_p1, c_p2 = st.columns(2)
@@ -888,6 +887,120 @@ def page_mia():
                         if safe_id in st.session_state["mia_impact_results"]:
                             st.markdown("---")
                             st.markdown(st.session_state["mia_impact_results"][safe_id])
+
+def page_olivia():
+    st.title("🤖 OlivIA Workspace")
+    markets, _ = get_markets()
+    c1, c2 = st.columns([2, 1])
+    with c1: 
+        desc = st.text_area("Product Definition", height=200, key="oli_desc")
+        uploads = st.file_uploader("📎 Attach Product Specs / Brief / Images (Optional)", type=['pdf', 'png', 'jpg', 'jpeg'], accept_multiple_files=True, key="oli_uploads")
+    with c2: 
+        safe_default = [markets[0]] if markets else []
+        ctrys = st.multiselect("Target Markets", markets, default=safe_default, key="oli_mkts")
+        st.write(""); gen = st.button("Generate Report", type="primary", key="oli_btn")
+    
+    if gen and desc:
+        with st.spinner("Analyzing (Multimodal)..."):
+            try:
+                pdf_context = ""
+                images_payload = []
+                if uploads:
+                    for up_file in uploads:
+                        if up_file.type == "application/pdf":
+                            txt = extract_text_from_pdf(up_file.read())
+                            pdf_context += f"\n--- CONTENT OF {up_file.name} ---\n{txt[:8000]}\n"
+                        elif up_file.type in ["image/png", "image/jpeg", "image/jpg"]:
+                            b64_img = base64.b64encode(up_file.getvalue()).decode('utf-8')
+                            images_payload.append(b64_img)
+
+                use_ds = any(x in str(ctrys) for x in ["EU","USA","China"])
+                ext_ctx = ""
+                if use_ds: 
+                    d, error, _ = cached_async_mia_deep_search(f"Regulations for {desc} in {ctrys}", "m12", 20)
+                    if d: ext_ctx = d
+                
+                sys_prompt = create_olivia_prompt(desc, ctrys)
+                final_text_prompt = sys_prompt
+                if ext_ctx: final_text_prompt += f"\n\nREGULATORY CONTEXT (EXTERNAL):\n{ext_ctx}"
+                if pdf_context: final_text_prompt += f"\n\nPRODUCT DOCUMENTS CONTEXT:\n{pdf_context}"
+                
+                messages = []
+                user_content = [{"type": "text", "text": final_text_prompt}]
+                for img_b64 in images_payload:
+                    user_content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}})
+                messages.append({"role": "user", "content": user_content})
+                
+                resp = cached_ai_generation(None, "gpt-4o", 0.1, messages=messages)
+                st.session_state["last_olivia_report"] = resp
+                st.session_state["last_olivia_id"] = str(uuid.uuid4())
+                log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)}")
+                st.toast("Analysis Ready!", icon="✅")
+            except Exception as e: st.error(f"Error: {str(e)}")
+
+    if st.session_state["last_olivia_report"]:
+        st.markdown("---")
+        st.success("✅ Analysis Generated")
+        st.markdown(st.session_state["last_olivia_report"])
+        st.markdown("---")
+        try:
+            safe_id = st.session_state.get('last_olivia_id', str(uuid.uuid4())[:8])
+            file_name_pdf = f"VALHALLAI_Report_{safe_id}.pdf"
+            pdf = generate_pdf_report("Regulatory Analysis Report", st.session_state["last_olivia_report"], safe_id)
+            if pdf: st.download_button("📥 Download PDF", pdf, file_name_pdf, "application/pdf")
+            else: st.error("PDF Generation failed.")
+        except Exception as e: st.error(f"PDF Error: {str(e)}")
+
+def page_eva():
+    st.title("🔍 EVA Workspace")
+    ctx = st.text_area("Context", value=st.session_state.get("last_olivia_report", ""), key="eva_ctx")
+    up = st.file_uploader("PDF", type="pdf", key="eva_up")
+    if st.button("Run Audit", type="primary", key="eva_btn") and up:
+        with st.spinner("Auditing..."):
+            try:
+                txt = extract_text_from_pdf(up.read())
+                resp = cached_ai_generation(create_eva_prompt(ctx, txt), "gpt-4o", 0.1)
+                st.session_state["last_eva_report"] = resp
+                st.session_state["last_eva_id"] = str(uuid.uuid4())
+                log_usage("EVA", st.session_state["last_eva_id"], f"File: {up.name}")
+                st.toast("Audit Complete!", icon="🔍")
+            except Exception as e: st.error(str(e))
+    
+    if st.session_state.get("last_eva_report"):
+        st.markdown("### Audit Results")
+        st.markdown(st.session_state["last_eva_report"])
+        st.markdown("---")
+        try:
+            safe_id = st.session_state.get('last_eva_id', str(uuid.uuid4())[:8])
+            file_name_pdf = f"VALHALLAI_Audit_{safe_id}.pdf"
+            pdf = generate_pdf_report("Compliance Audit Report", st.session_state["last_eva_report"], safe_id)
+            if pdf: st.download_button("📥 Download PDF", pdf, file_name_pdf, "application/pdf")
+        except: pass
+
+def page_dashboard():
+    st.title("Dashboard")
+    st.markdown(f"<span class='sub-text'>{config.APP_SLOGAN}</span>", unsafe_allow_html=True)
+    st.markdown("###")
+    c1, c2, c3 = st.columns(3)
+    
+    with c1: 
+        st.markdown(f"""<div class="info-card"><h3>🤖 OlivIA</h3><p class='sub-text'>{config.AGENTS['olivia']['description']}</p></div>""", unsafe_allow_html=True)
+        st.write("")
+        if st.button("Launch OlivIA ->"): 
+            st.session_state["current_page"] = "OlivIA"
+            st.rerun()
+    with c2: 
+        st.markdown(f"""<div class="info-card"><h3>🔍 EVA</h3><p class='sub-text'>{config.AGENTS['eva']['description']}</p></div>""", unsafe_allow_html=True)
+        st.write("")
+        if st.button("Launch EVA ->"): 
+            st.session_state["current_page"] = "EVA"
+            st.rerun()
+    with c3: 
+        st.markdown(f"""<div class="info-card"><h3>{config.AGENTS['mia']['icon']} {config.AGENTS['mia']['name']}</h3><p class='sub-text'>{config.AGENTS['mia']['description']}</p></div>""", unsafe_allow_html=True)
+        st.write("")
+        if st.button("Launch MIA ->"): 
+            st.session_state["current_page"] = "MIA"
+            st.rerun()
 
 def render_sidebar():
     with st.sidebar:
