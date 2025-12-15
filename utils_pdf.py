@@ -2,8 +2,9 @@ import os
 import urllib.request
 from datetime import datetime
 from fpdf import FPDF, HTMLMixin
-from fpdf.fonts import FontFace # Important pour le style
+from fpdf.fonts import FontFace
 import markdown
+import re
 
 # --- GESTION DES POLICES ---
 FONT_URL = "https://github.com/googlefonts/noto-fonts/raw/main/hinted/ttf/NotoSans/NotoSans-Regular.ttf"
@@ -26,6 +27,10 @@ class ValhallaiPDF(FPDF, HTMLMixin):
         self.title_doc = title_doc
         self.report_id = report_id
         
+        # MARGES OPTIMISÉES (1.5 cm) pour éviter l'erreur "Not enough space"
+        self.set_margins(15, 15, 15)
+        self.set_auto_page_break(auto=True, margin=15)
+        
         try:
             self.add_font("NotoSans", style="", fname=FONT_PATH)
             self.add_font("NotoSans", style="B", fname=FONT_BOLD_PATH)
@@ -34,29 +39,29 @@ class ValhallaiPDF(FPDF, HTMLMixin):
             self.main_font = "Arial"
 
     def header(self):
-        # En-tête propre sans HTML
         self.set_font(self.main_font, 'B', 20)
-        self.set_text_color(41, 90, 99) # Vert Valhallai
+        self.set_text_color(41, 90, 99) 
         self.cell(0, 10, 'VALHALLAI', ln=1)
         
         self.set_font(self.main_font, '', 9)
         self.set_text_color(100, 100, 100)
         self.cell(0, 5, 'REGULATORY SHIELD', ln=1)
         
-        self.set_draw_color(200, 169, 81) # Doré
+        self.set_draw_color(200, 169, 81)
         self.set_line_width(0.5)
-        self.line(10, 28, 200, 28)
+        self.line(15, 28, 195, 28) # Ligne ajustée aux nouvelles marges
         
-        # Meta-data à droite
         self.set_xy(100, 12)
         self.set_font(self.main_font, 'B', 10)
         self.set_text_color(0)
-        self.cell(100, 6, self.title_doc[:50], align='R', ln=1)
+        # Tronquer le titre s'il est trop long pour éviter le chevauchement
+        clean_title = (self.title_doc[:45] + '...') if len(self.title_doc) > 45 else self.title_doc
+        self.cell(95, 6, clean_title, align='R', ln=1)
         
         self.set_xy(100, 18)
         self.set_font(self.main_font, '', 8)
         self.set_text_color(128)
-        self.cell(100, 4, datetime.now().strftime("%Y-%m-%d"), align='R', ln=1)
+        self.cell(95, 4, datetime.now().strftime("%Y-%m-%d"), align='R', ln=1)
         self.ln(15)
 
     def footer(self):
@@ -75,12 +80,10 @@ def generate_pdf_report(title, content_markdown, report_id):
         extensions=['tables', 'fenced_code', 'sane_lists']
     )
     
-    # 2. HACK: Forcer les bordures des tableaux en HTML
-    # Markdown ne met pas border="1", donc FPDF ne dessine pas les lignes par défaut.
-    html_content = html_content.replace('<table>', '<table border="1" width="100%" cellpadding="5">')
+    # 2. Nettoyage et Force Borders sur les tableaux
+    html_content = html_content.replace('<table>', '<table border="1" width="100%" cellpadding="3">')
     
-    # 3. DÉFINITION DES STYLES (C'est ici qu'on corrige les couleurs et polices)
-    # Plus de CSS texte, on utilise des objets FontFace que FPDF comprend.
+    # 3. STYLES (Optimisés pour l'espace)
     valhallai_green = (41, 90, 99)
     dark_grey = (50, 50, 50)
     
@@ -89,22 +92,33 @@ def generate_pdf_report(title, content_markdown, report_id):
         "h2": FontFace(color=valhallai_green, emphasis="B", size_pt=14),
         "h3": FontFace(color=(26, 60, 66), emphasis="B", size_pt=12),
         "p": FontFace(color=dark_grey, size_pt=10),
-        "li": FontFace(color=dark_grey, size_pt=10), # Force les puces en gris foncé (plus de rouge)
-        "table": FontFace(size_pt=9), # Tableaux un peu plus petits pour tenir
-        "th": FontFace(color=valhallai_green, emphasis="B", fill_color=(240, 240, 240)), # Entête tableau
+        "li": FontFace(color=dark_grey, size_pt=10),
+        
+        # TABLEAUX : Police réduite pour éviter le débordement horizontal
+        "table": FontFace(size_pt=8), 
+        "th": FontFace(color=valhallai_green, emphasis="B", fill_color=(240, 240, 240), size_pt=9),
+        "td": FontFace(size_pt=8),
     }
     
-    # 4. Écriture
+    # 4. Écriture avec FILET DE SÉCURITÉ
     pdf.set_font(pdf.main_font, '', 10)
     
     try:
-        # table_line_separators=True active le dessin des lignes de tableau
         pdf.write_html(html_content, tag_styles=tag_styles, table_line_separators=True)
     except Exception as e:
+        # PLAN DE SECOURS : Si le rendu HTML plante (tableau trop complexe),
+        # on imprime une version texte simplifiée.
+        print(f"PDF HTML Error: {e}")
+        pdf.add_page()
+        pdf.set_font(pdf.main_font, 'B', 12)
         pdf.set_text_color(255, 0, 0)
-        pdf.multi_cell(0, 5, f"Erreur PDF: {str(e)}")
-        # En cas de crash HTML, on imprime le texte brut pour ne pas perdre l'info
+        pdf.cell(0, 10, "Complex Formatting Fallback", ln=1)
+        
+        pdf.set_font(pdf.main_font, '', 10)
         pdf.set_text_color(0)
-        pdf.multi_cell(0, 5, content_markdown)
+        
+        # Nettoyage basique du markdown pour le rendre lisible
+        clean_text = content_markdown.replace('#', '').replace('*', '')
+        pdf.multi_cell(0, 5, clean_text)
 
     return bytes(pdf.output())
