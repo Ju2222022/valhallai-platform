@@ -387,7 +387,6 @@ async def async_fetch_and_process_source(item, query_keywords, tavily_key):
     
     headers = {'User-Agent': 'Mozilla/5.0 (compatible; MIA-Bot/1.0)'}
     
-    # 1. CAS PDF
     if url.lower().endswith('.pdf'):
         try:
             timeout = aiohttp.ClientTimeout(total=15)
@@ -399,7 +398,6 @@ async def async_fetch_and_process_source(item, query_keywords, tavily_key):
                         return {"source": url, "type": "pdf", "title": title, "content": content}
         except: pass 
 
-    # 2. CAS WEB (FALLBACK TAVILY)
     try:
         if not tavily_key: return None
         tavily = TavilyClient(api_key=tavily_key)
@@ -828,7 +826,7 @@ def page_mia():
                         save_watchlist(new_wl_name, topic, selected_markets, selected_label)
                         st.toast("Saved!", icon="💾")
                         st.cache_data.clear()
-                        st.rerun() # Refresh immédiat
+                        st.rerun()
                         
         if launch: st.session_state["mia_raw_count"] = 0 
 
@@ -844,8 +842,7 @@ def page_mia():
                 st.session_state["mia_raw_count"] = raw_count
                 
                 prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
-                # FORCE GPT-4o
-                json_str = cached_ai_generation(prompt, "gpt-4o", 0.1, json_mode=True)
+                json_str = cached_ai_generation(prompt, config.OPENAI_MODEL, 0.1, json_mode=True)
                 try:
                     parsed_data = json.loads(json_str)
                     if "items" not in parsed_data: parsed_data["items"] = []
@@ -928,13 +925,81 @@ def page_mia():
                             st.session_state["active_analysis_id"] = safe_id
                             with st.spinner("Evaluating..."):
                                 ia_prompt = create_impact_analysis_prompt(prod_ctx, f"{item['title']}: {item['summary']}")
-                                ia_res = cached_ai_generation(ia_prompt, "gpt-4o", 0.1)
+                                ia_res = cached_ai_generation(ia_prompt, config.OPENAI_MODEL, 0.1)
                                 st.session_state["mia_impact_results"][safe_id] = ia_res
                                 st.rerun()
 
                         if safe_id in st.session_state["mia_impact_results"]:
                             st.markdown("---")
                             st.markdown(st.session_state["mia_impact_results"][safe_id])
+
+def page_olivia():
+    st.title("🤖 OlivIA Workspace")
+    markets, _ = get_markets()
+    c1, c2 = st.columns([2, 1])
+    with c1: desc = st.text_area("Product Definition", height=200, key="oli_desc")
+    with c2: 
+        safe_default = [markets[0]] if markets else []
+        ctrys = st.multiselect("Target Markets", markets, default=safe_default, key="oli_mkts")
+        st.write(""); gen = st.button("Generate Report", type="primary", key="oli_btn")
+    
+    if gen and desc:
+        with st.spinner("Analyzing..."):
+            try:
+                use_ds = any(x in str(ctrys) for x in ["EU","USA","China"])
+                ctx = ""
+                if use_ds: 
+                    # CORRECTIF V40.0 : UTILISATION DU MOTEUR HYBRIDE ASYNCHRONE
+                    # On lance une recherche large (sur 12 mois) pour nourrir OlivIA
+                    # 'm12' = Last 12 months, '20' = Max results
+                    d, error, _ = cached_async_mia_deep_search(f"Regulations for {desc} in {ctrys}", "m12", 20)
+                    if d: ctx = d
+                
+                p = create_olivia_prompt(desc, ctrys)
+                if ctx: p += f"\n\nCONTEXT:\n{ctx}"
+                
+                resp = cached_ai_generation(p, config.OPENAI_MODEL, 0.1)
+                st.session_state["last_olivia_report"] = resp
+                st.session_state["last_olivia_id"] = str(uuid.uuid4())
+                log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)}")
+                st.toast("Analysis Ready!", icon="✅")
+            except Exception as e: st.error(str(e))
+
+    if st.session_state["last_olivia_report"]:
+        st.markdown("---")
+        st.success("✅ Analysis Generated")
+        st.markdown(st.session_state["last_olivia_report"])
+        st.markdown("---")
+        try:
+            pdf = generate_pdf_report("Regulatory Analysis Report", st.session_state["last_olivia_report"], st.session_state.get("last_olivia_id", "ID"))
+            st.download_button("📥 Download PDF", pdf, f"VALHALLAI_Report.pdf", "application/pdf")
+        except:
+            st.download_button("📥 Download Raw Text", st.session_state["last_olivia_report"], "report.md")
+
+def page_eva():
+    st.title("🔍 EVA Workspace")
+    ctx = st.text_area("Context", value=st.session_state.get("last_olivia_report", ""), key="eva_ctx")
+    up = st.file_uploader("PDF", type="pdf", key="eva_up")
+    if st.button("Run Audit", type="primary", key="eva_btn") and up:
+        with st.spinner("Auditing..."):
+            try:
+                txt = extract_text_from_pdf(up.read())
+                resp = cached_ai_generation(create_eva_prompt(ctx, txt), "gpt-4o", 0.1)
+                st.session_state["last_eva_report"] = resp
+                st.session_state["last_eva_id"] = str(uuid.uuid4())
+                log_usage("EVA", st.session_state["last_eva_id"], f"File: {up.name}")
+                st.toast("Audit Complete!", icon="🔍")
+            except Exception as e: st.error(str(e))
+    
+    if st.session_state.get("last_eva_report"):
+        st.markdown("### Audit Results")
+        st.markdown(st.session_state["last_eva_report"])
+        st.markdown("---")
+        try:
+            pdf = generate_pdf_report("Compliance Audit Report", st.session_state["last_eva_report"], st.session_state.get("last_eva_id", "ID"))
+            st.download_button("📥 Download PDF", pdf, f"VALHALLAI_Audit.pdf", "application/pdf")
+        except:
+            st.download_button("📥 Download Text", st.session_state["last_eva_report"], "audit.md")
 
 def page_dashboard():
     st.title("Dashboard")
