@@ -48,13 +48,12 @@ DEFAULT_DOMAINS = [
     "reuters.com", "raps.org", "medtechdive.com", "complianceandrisks.com"
 ]
 
-# NOUVEAUX PARAMÈTRES POUR LES PROVIDERS (V48)
 DEFAULT_APP_CONFIG = {
     "enable_impact_analysis": "TRUE",
     "cache_ttl_hours": "1",
     "max_search_results": "20",
-    "provider_google": "TRUE",  # Master Switch Google
-    "provider_tavily": "TRUE"   # Master Switch Tavily
+    "provider_google": "TRUE",
+    "provider_tavily": "TRUE"
 }
 
 def get_google_search_keys():
@@ -115,7 +114,6 @@ def update_app_config(key, value):
                 st.cache_data.clear()
                 return True
             else:
-                # Si la clé n'existe pas encore dans le sheet (mise à jour V48)
                 sheet.append_row([key, str(value)])
                 st.cache_data.clear()
                 return True
@@ -310,7 +308,7 @@ def extract_pdf_content_by_density(pdf_bytes, keywords, window_size=500):
     except: return "PDF Error"
 
 async def async_google_search(query, domains, max_results, date_restrict=None):
-    # V48 : Check si Google est activé par l'Admin
+    # V48+ : Check Master Switch
     config = st.session_state.get("app_config", {})
     if config.get("provider_google", "TRUE") == "FALSE":
         return {"items": []}, "Google Search Disabled by Admin"
@@ -388,7 +386,7 @@ async def async_fetch_and_process_source(item, query_keywords, tavily_key):
                         return {"source": url, "type": "pdf", "title": title, "content": content}
         except: pass 
 
-    # V48 : Check si Tavily est activé par l'Admin
+    # V48+ : Check Tavily Switch
     config = st.session_state.get("app_config", {})
     if config.get("provider_tavily", "TRUE") == "TRUE":
         try:
@@ -414,9 +412,9 @@ def cached_async_mia_deep_search(query, date_restrict_code, max_results):
         async def run_pipeline():
             google_json, error = await async_google_search(query, doms, max_results, date_restrict=date_restrict_code)
             
-            # Si erreur Google, on la remonte mais on ne bloque pas si c'est "Disabled"
+            # V48+ : Gestion Disabled sans erreur fatale
             if error and "Disabled" in error:
-                return [], 0, "DISABLED" # Code spécial
+                return [], 0, "DISABLED"
             if error: 
                 return [], 0, error
             
@@ -562,7 +560,7 @@ def create_eva_prompt(ctx, doc):
     Structure: 1. Verdict, 2. Gap Table (Requirement|Status|Evidence|Missing), 3. Risks, 4. Recommendations."""
 
 def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
-    # MODIF V48: GESTION DU MODE SANS SOURCE
+    # MODIF V48+ : Context "Sans Source"
     source_context = raw_search_data
     if raw_search_data == "DISABLED" or not raw_search_data:
         source_context = "NO EXTERNAL SOURCES AVAILABLE. USE YOUR INTERNAL KNOWLEDGE BASE (GPT-4o) TO GENERATE RELEVANT INSIGHTS FOR THIS TOPIC."
@@ -672,9 +670,10 @@ def page_admin():
     with tc:
         app_config = st.session_state.get("app_config", get_app_config())
         
-        # SECTION PROVIDERS (V48)
-        st.markdown("#### 🔌 Search Providers (Feature Flags)")
+        # --- SECTION RESTAURÉE V49.0 ---
+        st.markdown("#### ⚡ Features & Providers")
         
+        # PROVIDERS
         c_p1, c_p2 = st.columns(2)
         with c_p1:
             curr_google = app_config.get("provider_google", "TRUE") == "TRUE"
@@ -683,7 +682,6 @@ def page_admin():
                 update_app_config("provider_google", "TRUE" if new_google else "FALSE")
                 st.session_state["app_config"]["provider_google"] = "TRUE" if new_google else "FALSE"
                 st.rerun()
-        
         with c_p2:
             curr_tavily = app_config.get("provider_tavily", "TRUE") == "TRUE"
             new_tavily = st.toggle("Enable Tavily (Deep Read)", value=curr_tavily)
@@ -692,16 +690,36 @@ def page_admin():
                 st.session_state["app_config"]["provider_tavily"] = "TRUE" if new_tavily else "FALSE"
                 st.rerun()
 
+        # IMPACT ANALYSIS (RESTAURÉ)
+        st.write("")
+        curr_impact = app_config.get("enable_impact_analysis", "TRUE") == "TRUE"
+        new_impact = st.toggle("Enable 'Assess Impact' Feature", value=curr_impact)
+        if new_impact != curr_impact:
+            update_app_config("enable_impact_analysis", "TRUE" if new_impact else "FALSE")
+            st.session_state["app_config"]["enable_impact_analysis"] = "TRUE" if new_impact else "FALSE"
+            st.rerun()
+
         st.markdown("---")
         st.markdown("#### Performance")
         
-        curr_max = app_config.get("max_search_results", "20")
-        new_max = st.text_input("🎯 Target Sources Volume", value=curr_max)
-        if st.button("Update Volume"):
-            if new_max.isdigit() and 1 <= int(new_max) <= 100:
-                update_app_config("max_search_results", new_max)
-                st.session_state["app_config"]["max_search_results"] = new_max
-                st.success("Updated!")
+        # CACHE (RESTAURÉ)
+        c_perf1, c_perf2 = st.columns(2)
+        with c_perf1:
+            curr_ttl = app_config.get("cache_ttl_hours", "1")
+            new_ttl = st.text_input("Cache Duration (Hours)", value=curr_ttl)
+            if st.button("Update Cache"):
+                update_app_config("cache_ttl_hours", new_ttl)
+                st.session_state["app_config"]["cache_ttl_hours"] = new_ttl
+                st.success("Saved.")
+        
+        with c_perf2:
+            curr_max = app_config.get("max_search_results", "20")
+            new_max = st.text_input("🎯 Target Sources Volume (Max 100)", value=curr_max) # (RESTAURÉ LABEL)
+            if st.button("Update Volume"):
+                if new_max.isdigit() and 1 <= int(new_max) <= 100:
+                    update_app_config("max_search_results", new_max)
+                    st.session_state["app_config"]["max_search_results"] = new_max
+                    st.success("Updated!")
 
 def page_mia():
     st.title("📡 MIA Watch Tower"); st.markdown("---")
@@ -767,28 +785,24 @@ def page_mia():
             clean_timeframe = selected_label.replace("⚡ ", "").replace("📅 ", "").replace("🏛️ ", "")
             query = f"regulations guidelines {topic} {', '.join(selected_markets)}"
             
-            # --- APPEL RECHERCHE (V48 - Fallback intégré) ---
             raw_data, error, raw_count = cached_async_mia_deep_search(query, date_restrict_code, max_res)
             
             is_offline_mode = (raw_data == "DISABLED")
             
-            # Gestion des erreurs
             if not is_offline_mode and not raw_data and error:
                 st.error(f"🛑 Critical Search Error: {error}")
                 st.stop()
             elif not is_offline_mode and raw_count == 0:
-                st.warning(f"⚠️ No updates found on Google. (Try enabling 'Pure GPT-4o Mode' by disabling Google in Admin to force generation).")
+                st.warning(f"⚠️ No updates found on Google. (Try enabling 'Pure GPT-4o Mode' by disabling Google in Admin).")
                 st.stop()
             
-            # Si on arrive ici, soit on a des résultats, soit on est en mode "Offline"
             st.session_state["mia_raw_count"] = raw_count if not is_offline_mode else 0
             
             if is_offline_mode:
-                st.info("🧠 Offline Mode Active: Generating insights from internal knowledge base (No Google Search).")
+                st.info("🧠 Offline Mode Active: Generating insights from internal knowledge base.")
 
             prompt = create_mia_prompt(topic, selected_markets, raw_data, selected_label)
             json_str = cached_ai_generation(prompt, "gpt-4o", 0.1, json_mode=True)
-            
             try:
                 parsed_data = json.loads(json_str)
                 if "items" not in parsed_data: parsed_data["items"] = []
@@ -874,31 +888,6 @@ def page_mia():
                         if safe_id in st.session_state["mia_impact_results"]:
                             st.markdown("---")
                             st.markdown(st.session_state["mia_impact_results"][safe_id])
-
-def page_dashboard():
-    st.title("Dashboard")
-    st.markdown(f"<span class='sub-text'>{config.APP_SLOGAN}</span>", unsafe_allow_html=True)
-    st.markdown("###")
-    c1, c2, c3 = st.columns(3)
-    
-    with c1: 
-        st.markdown(f"""<div class="info-card"><h3>🤖 OlivIA</h3><p class='sub-text'>{config.AGENTS['olivia']['description']}</p></div>""", unsafe_allow_html=True)
-        st.write("")
-        if st.button("Launch OlivIA ->"): 
-            st.session_state["current_page"] = "OlivIA"
-            st.rerun()
-    with c2: 
-        st.markdown(f"""<div class="info-card"><h3>🔍 EVA</h3><p class='sub-text'>{config.AGENTS['eva']['description']}</p></div>""", unsafe_allow_html=True)
-        st.write("")
-        if st.button("Launch EVA ->"): 
-            st.session_state["current_page"] = "EVA"
-            st.rerun()
-    with c3: 
-        st.markdown(f"""<div class="info-card"><h3>{config.AGENTS['mia']['icon']} {config.AGENTS['mia']['name']}</h3><p class='sub-text'>{config.AGENTS['mia']['description']}</p></div>""", unsafe_allow_html=True)
-        st.write("")
-        if st.button("Launch MIA ->"): 
-            st.session_state["current_page"] = "MIA"
-            st.rerun()
 
 def render_sidebar():
     with st.sidebar:
