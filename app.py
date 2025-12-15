@@ -878,6 +878,32 @@ def page_eva():
             if pdf: st.download_button("📥 Download PDF", pdf, file_name_pdf, "application/pdf")
         except: pass
 
+# --- FONCTION RESTAURÉE ---
+def page_dashboard():
+    st.title("Dashboard")
+    st.markdown(f"<span class='sub-text'>{config.APP_SLOGAN}</span>", unsafe_allow_html=True)
+    st.markdown("###")
+    c1, c2, c3 = st.columns(3)
+    
+    with c1: 
+        st.markdown(f"""<div class="info-card"><h3>🤖 OlivIA</h3><p class='sub-text'>{config.AGENTS['olivia']['description']}</p></div>""", unsafe_allow_html=True)
+        st.write("")
+        if st.button("Launch OlivIA ->"): 
+            st.session_state["current_page"] = "OlivIA"
+            st.rerun()
+    with c2: 
+        st.markdown(f"""<div class="info-card"><h3>🔍 EVA</h3><p class='sub-text'>{config.AGENTS['eva']['description']}</p></div>""", unsafe_allow_html=True)
+        st.write("")
+        if st.button("Launch EVA ->"): 
+            st.session_state["current_page"] = "EVA"
+            st.rerun()
+    with c3: 
+        st.markdown(f"""<div class="info-card"><h3>{config.AGENTS['mia']['icon']} {config.AGENTS['mia']['name']}</h3><p class='sub-text'>{config.AGENTS['mia']['description']}</p></div>""", unsafe_allow_html=True)
+        st.write("")
+        if st.button("Launch MIA ->"): 
+            st.session_state["current_page"] = "MIA"
+            st.rerun()
+
 def render_sidebar():
     with st.sidebar:
         if st.button("🏠 Dashboard", use_container_width=True):
