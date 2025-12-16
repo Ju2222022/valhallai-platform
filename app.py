@@ -60,7 +60,7 @@ def get_google_search_keys():
     return st.secrets.get("GOOGLE_SEARCH_API_KEY"), st.secrets.get("GOOGLE_SEARCH_CX")
 
 # =============================================================================
-# 1. GESTION DES DONNÉES (PERSISTANCE OK)
+# 1. GESTION DES DONNÉES
 # =============================================================================
 @st.cache_resource
 def get_gsheet_workbook():
@@ -105,7 +105,6 @@ def get_app_config():
                         config_dict[k] = v
                         existing_keys.add(k)
             
-            # Auto-repair : Ajout des clés manquantes dans le Sheet
             missing = [k for k in DEFAULT_APP_CONFIG if k not in existing_keys]
             for k in missing: sheet.append_row([k, DEFAULT_APP_CONFIG[k]])
         except: pass
@@ -939,15 +938,25 @@ def page_dashboard():
     st.markdown(f"<span class='sub-text'>{config.APP_SLOGAN}</span>", unsafe_allow_html=True)
     st.markdown("###")
     c1, c2, c3 = st.columns(3)
+    
     with c1: 
         st.markdown(f"""<div class="info-card"><h3>🤖 OlivIA</h3><p class='sub-text'>{config.AGENTS['olivia']['description']}</p></div>""", unsafe_allow_html=True)
-        st.write(""); if st.button("Launch OlivIA ->"): st.session_state["current_page"] = "OlivIA"; st.rerun()
+        st.write("")
+        if st.button("Launch OlivIA ->"): 
+            st.session_state["current_page"] = "OlivIA"
+            st.rerun()
     with c2: 
         st.markdown(f"""<div class="info-card"><h3>🔍 EVA</h3><p class='sub-text'>{config.AGENTS['eva']['description']}</p></div>""", unsafe_allow_html=True)
-        st.write(""); if st.button("Launch EVA ->"): st.session_state["current_page"] = "EVA"; st.rerun()
+        st.write("")
+        if st.button("Launch EVA ->"): 
+            st.session_state["current_page"] = "EVA"
+            st.rerun()
     with c3: 
         st.markdown(f"""<div class="info-card"><h3>{config.AGENTS['mia']['icon']} {config.AGENTS['mia']['name']}</h3><p class='sub-text'>{config.AGENTS['mia']['description']}</p></div>""", unsafe_allow_html=True)
-        st.write(""); if st.button("Launch MIA ->"): st.session_state["current_page"] = "MIA"; st.rerun()
+        st.write("")
+        if st.button("Launch MIA ->"): 
+            st.session_state["current_page"] = "MIA"
+            st.rerun()
 
 def render_sidebar():
     with st.sidebar:
