@@ -60,7 +60,7 @@ def get_google_search_keys():
     return st.secrets.get("GOOGLE_SEARCH_API_KEY"), st.secrets.get("GOOGLE_SEARCH_CX")
 
 # =============================================================================
-# 1. GESTION DES DONNÉES
+# 1. GESTION DES DONNÉES (CORRECTIF PERSISTANCE V51)
 # =============================================================================
 @st.cache_resource
 def get_gsheet_workbook():
@@ -85,21 +85,40 @@ def get_gsheet_workbook():
         return None
 
 def get_app_config():
+    """Lit la config et assure la synchro des clés manquantes."""
     wb = get_gsheet_workbook()
     config_dict = DEFAULT_APP_CONFIG.copy()
+    
     if wb:
         try:
-            try: sheet = wb.worksheet("MIA_App_Config")
+            try: 
+                sheet = wb.worksheet("MIA_App_Config")
             except:
+                # Création initiale si n'existe pas
                 sheet = wb.add_worksheet("MIA_App_Config", 20, 2)
                 sheet.append_row(["Setting_Key", "Value"])
                 for k, v in DEFAULT_APP_CONFIG.items(): sheet.append_row([k, v])
                 return config_dict
+            
+            # Lecture des données existantes
             rows = sheet.get_all_values()
+            existing_keys = set()
+            
             if len(rows) > 1:
                 for row in rows[1:]:
                     if len(row) >= 2:
-                        config_dict[str(row[0]).strip()] = str(row[1]).strip()
+                        key = str(row[0]).strip()
+                        val = str(row[1]).strip()
+                        config_dict[key] = val
+                        existing_keys.add(key)
+            
+            # AUTO-SYNC : Si une clé par défaut manque dans le Sheet, on l'ajoute
+            # Cela corrige le problème de persistance des nouveaux boutons
+            missing_keys = [k for k in DEFAULT_APP_CONFIG.keys() if k not in existing_keys]
+            if missing_keys:
+                for k in missing_keys:
+                    sheet.append_row([k, DEFAULT_APP_CONFIG[k]])
+                    
         except: pass
     return config_dict
 
@@ -111,12 +130,11 @@ def update_app_config(key, value):
             cell = sheet.find(key)
             if cell:
                 sheet.update_cell(cell.row, 2, str(value))
-                st.cache_data.clear()
-                return True
             else:
                 sheet.append_row([key, str(value)])
-                st.cache_data.clear()
-                return True
+            
+            st.cache_data.clear() # Force le rechargement
+            return True
         except: pass
     return False
 
@@ -308,7 +326,7 @@ def extract_pdf_content_by_density(pdf_bytes, keywords, window_size=500):
     except: return "PDF Error"
 
 async def async_google_search(query, domains, max_results, date_restrict=None):
-    # V48 : Check si Google est activé par l'Admin
+    # V48+ : Check Master Switch
     config = st.session_state.get("app_config", {})
     if config.get("provider_google", "TRUE") == "FALSE":
         return {"items": []}, "Google Search Disabled by Admin"
@@ -386,7 +404,7 @@ async def async_fetch_and_process_source(item, query_keywords, tavily_key):
                         return {"source": url, "type": "pdf", "title": title, "content": content}
         except: pass 
 
-    # V48 : Check si Tavily est activé par l'Admin
+    # V48+ : Check Tavily Switch
     config = st.session_state.get("app_config", {})
     if config.get("provider_tavily", "TRUE") == "TRUE":
         try:
@@ -412,9 +430,9 @@ def cached_async_mia_deep_search(query, date_restrict_code, max_results):
         async def run_pipeline():
             google_json, error = await async_google_search(query, doms, max_results, date_restrict=date_restrict_code)
             
-            # Si erreur Google, on la remonte mais on ne bloque pas si c'est "Disabled"
+            # V48+ : Gestion Disabled sans erreur fatale
             if error and "Disabled" in error:
-                return [], 0, "DISABLED" # Code spécial
+                return [], 0, "DISABLED"
             if error: 
                 return [], 0, error
             
@@ -560,6 +578,7 @@ def create_eva_prompt(ctx, doc):
     Structure: 1. Verdict, 2. Gap Table (Requirement|Status|Evidence|Missing), 3. Risks, 4. Recommendations."""
 
 def create_mia_prompt(topic, markets, raw_search_data, timeframe_label):
+    # MODIF V48+ : Context "Sans Source"
     source_context = raw_search_data
     if raw_search_data == "DISABLED" or not raw_search_data:
         source_context = "NO EXTERNAL SOURCES AVAILABLE. USE YOUR INTERNAL KNOWLEDGE BASE (GPT-4o) TO GENERATE RELEVANT INSIGHTS FOR THIS TOPIC."
@@ -627,7 +646,7 @@ def apply_theme():
     """, unsafe_allow_html=True)
 
 # =============================================================================
-# 7. PAGES UI (DASHBOARD, OLIVIA, EVA, MIA, ADMIN)
+# 7. PAGES UI
 # =============================================================================
 def page_admin():
     st.title("⚙️ Admin Console"); st.markdown("---")
@@ -669,10 +688,9 @@ def page_admin():
     with tc:
         app_config = st.session_state.get("app_config", get_app_config())
         
-        # --- SECTION RESTAURÉE V49.0 ---
+        # --- SECTION PROVIDERS (FIX UX V51: INVERSION) ---
         st.markdown("#### 🔌 Search Providers (Feature Flags)")
         
-        # PROVIDERS
         c_p1, c_p2 = st.columns(2)
         with c_p1:
             curr_google = app_config.get("provider_google", "TRUE") == "TRUE"
@@ -681,7 +699,20 @@ def page_admin():
                 update_app_config("provider_google", "TRUE" if new_google else "FALSE")
                 st.session_state["app_config"]["provider_google"] = "TRUE" if new_google else "FALSE"
                 st.rerun()
+        
         with c_p2:
+            # FIX: Assess Impact déplacé ici pour l'harmonie
+            curr_impact = app_config.get("enable_impact_analysis", "TRUE") == "TRUE"
+            new_impact = st.toggle("Enable 'Assess Impact' Feature", value=curr_impact)
+            if new_impact != curr_impact:
+                update_app_config("enable_impact_analysis", "TRUE" if new_impact else "FALSE")
+                st.session_state["app_config"]["enable_impact_analysis"] = "TRUE" if new_impact else "FALSE"
+                st.rerun()
+
+        st.write("")
+        c_p3, c_p4 = st.columns(2)
+        with c_p3:
+            # FIX: Tavily déplacé ici (Ligne 2)
             curr_tavily = app_config.get("provider_tavily", "TRUE") == "TRUE"
             new_tavily = st.toggle("Enable Tavily (Deep Read)", value=curr_tavily)
             if new_tavily != curr_tavily:
@@ -689,19 +720,9 @@ def page_admin():
                 st.session_state["app_config"]["provider_tavily"] = "TRUE" if new_tavily else "FALSE"
                 st.rerun()
 
-        # IMPACT ANALYSIS (RESTAURÉ)
-        st.write("")
-        curr_impact = app_config.get("enable_impact_analysis", "TRUE") == "TRUE"
-        new_impact = st.toggle("Enable 'Assess Impact' Feature", value=curr_impact)
-        if new_impact != curr_impact:
-            update_app_config("enable_impact_analysis", "TRUE" if new_impact else "FALSE")
-            st.session_state["app_config"]["enable_impact_analysis"] = "TRUE" if new_impact else "FALSE"
-            st.rerun()
-
         st.markdown("---")
         st.markdown("#### Performance")
         
-        # CACHE (RESTAURÉ)
         c_perf1, c_perf2 = st.columns(2)
         with c_perf1:
             curr_ttl = app_config.get("cache_ttl_hours", "1")
@@ -713,7 +734,7 @@ def page_admin():
         
         with c_perf2:
             curr_max = app_config.get("max_search_results", "20")
-            new_max = st.text_input("🎯 Target Sources Volume (Max 100)", value=curr_max) # (RESTAURÉ LABEL)
+            new_max = st.text_input("🎯 Target Sources Volume (Max 100)", value=curr_max)
             if st.button("Update Volume"):
                 if new_max.isdigit() and 1 <= int(new_max) <= 100:
                     update_app_config("max_search_results", new_max)
@@ -887,95 +908,6 @@ def page_mia():
                         if safe_id in st.session_state["mia_impact_results"]:
                             st.markdown("---")
                             st.markdown(st.session_state["mia_impact_results"][safe_id])
-
-def page_olivia():
-    st.title("🤖 OlivIA Workspace")
-    markets, _ = get_markets()
-    c1, c2 = st.columns([2, 1])
-    with c1: 
-        desc = st.text_area("Product Definition", height=200, key="oli_desc")
-        uploads = st.file_uploader("📎 Attach Product Specs / Brief / Images (Optional)", type=['pdf', 'png', 'jpg', 'jpeg'], accept_multiple_files=True, key="oli_uploads")
-    with c2: 
-        safe_default = [markets[0]] if markets else []
-        ctrys = st.multiselect("Target Markets", markets, default=safe_default, key="oli_mkts")
-        st.write(""); gen = st.button("Generate Report", type="primary", key="oli_btn")
-    
-    if gen and desc:
-        with st.spinner("Analyzing (Multimodal)..."):
-            try:
-                pdf_context = ""
-                images_payload = []
-                if uploads:
-                    for up_file in uploads:
-                        if up_file.type == "application/pdf":
-                            txt = extract_text_from_pdf(up_file.read())
-                            pdf_context += f"\n--- CONTENT OF {up_file.name} ---\n{txt[:8000]}\n"
-                        elif up_file.type in ["image/png", "image/jpeg", "image/jpg"]:
-                            b64_img = base64.b64encode(up_file.getvalue()).decode('utf-8')
-                            images_payload.append(b64_img)
-
-                use_ds = any(x in str(ctrys) for x in ["EU","USA","China"])
-                ext_ctx = ""
-                if use_ds: 
-                    d, error, _ = cached_async_mia_deep_search(f"Regulations for {desc} in {ctrys}", "m12", 20)
-                    if d: ext_ctx = d
-                
-                sys_prompt = create_olivia_prompt(desc, ctrys)
-                final_text_prompt = sys_prompt
-                if ext_ctx: final_text_prompt += f"\n\nREGULATORY CONTEXT (EXTERNAL):\n{ext_ctx}"
-                if pdf_context: final_text_prompt += f"\n\nPRODUCT DOCUMENTS CONTEXT:\n{pdf_context}"
-                
-                messages = []
-                user_content = [{"type": "text", "text": final_text_prompt}]
-                for img_b64 in images_payload:
-                    user_content.append({"type": "image_url", "image_url": {"url": f"data:image/jpeg;base64,{img_b64}"}})
-                messages.append({"role": "user", "content": user_content})
-                
-                resp = cached_ai_generation(None, "gpt-4o", 0.1, messages=messages)
-                st.session_state["last_olivia_report"] = resp
-                st.session_state["last_olivia_id"] = str(uuid.uuid4())
-                log_usage("OlivIA", st.session_state["last_olivia_id"], desc, f"Mkts:{len(ctrys)}")
-                st.toast("Analysis Ready!", icon="✅")
-            except Exception as e: st.error(f"Error: {str(e)}")
-
-    if st.session_state["last_olivia_report"]:
-        st.markdown("---")
-        st.success("✅ Analysis Generated")
-        st.markdown(st.session_state["last_olivia_report"])
-        st.markdown("---")
-        try:
-            safe_id = st.session_state.get('last_olivia_id', str(uuid.uuid4())[:8])
-            file_name_pdf = f"VALHALLAI_Report_{safe_id}.pdf"
-            pdf = generate_pdf_report("Regulatory Analysis Report", st.session_state["last_olivia_report"], safe_id)
-            if pdf: st.download_button("📥 Download PDF", pdf, file_name_pdf, "application/pdf")
-            else: st.error("PDF Generation failed.")
-        except Exception as e: st.error(f"PDF Error: {str(e)}")
-
-def page_eva():
-    st.title("🔍 EVA Workspace")
-    ctx = st.text_area("Context", value=st.session_state.get("last_olivia_report", ""), key="eva_ctx")
-    up = st.file_uploader("PDF", type="pdf", key="eva_up")
-    if st.button("Run Audit", type="primary", key="eva_btn") and up:
-        with st.spinner("Auditing..."):
-            try:
-                txt = extract_text_from_pdf(up.read())
-                resp = cached_ai_generation(create_eva_prompt(ctx, txt), "gpt-4o", 0.1)
-                st.session_state["last_eva_report"] = resp
-                st.session_state["last_eva_id"] = str(uuid.uuid4())
-                log_usage("EVA", st.session_state["last_eva_id"], f"File: {up.name}")
-                st.toast("Audit Complete!", icon="🔍")
-            except Exception as e: st.error(str(e))
-    
-    if st.session_state.get("last_eva_report"):
-        st.markdown("### Audit Results")
-        st.markdown(st.session_state["last_eva_report"])
-        st.markdown("---")
-        try:
-            safe_id = st.session_state.get('last_eva_id', str(uuid.uuid4())[:8])
-            file_name_pdf = f"VALHALLAI_Audit_{safe_id}.pdf"
-            pdf = generate_pdf_report("Compliance Audit Report", st.session_state["last_eva_report"], safe_id)
-            if pdf: st.download_button("📥 Download PDF", pdf, file_name_pdf, "application/pdf")
-        except: pass
 
 def page_dashboard():
     st.title("Dashboard")
